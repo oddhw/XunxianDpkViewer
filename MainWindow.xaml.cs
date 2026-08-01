@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
+using System.Threading;
 using System.Xml.Linq;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -29,16 +31,20 @@ public sealed partial class MainWindow : Window
     private readonly MediaPlayer _mediaPlayer = new();
     private readonly MediaPlayerElement _audioPlayer;
     private readonly ModelPreviewControl _modelPreview;
+    private readonly SemaphoreSlim _globalSearchLock = new(1, 1);
+    private CancellationTokenSource? _globalSearchCancellation;
     private List<AssetEntry> _filteredAssets = new();
     private AssetKind _currentKind = AssetKind.Image;
     private AssetEntry? _selectedAsset;
     private CompositeModelEntry? _selectedComposite;
     private MbTableViewModel? _currentMbTableView;
+    private List<GlobalSearchResultViewModel> _globalSearchResults = new();
     private List<DungeonSummaryViewModel> _dungeonSummaries = new();
     private DungeonSummaryViewModel? _selectedDungeonSummary;
     private bool _dungeonSummariesBuilt;
     private int _sortMode;
     private int _thumbnailGeneration;
+    private int _globalSearchGeneration;
     private bool _isBusy;
     private bool _modelExpanded;
     private bool _buildingFolderTree;
@@ -47,6 +53,8 @@ public sealed partial class MainWindow : Window
     private FolderNodeInfo? _selectedFolder;
     private int _previewGeneration;
     private readonly Dictionary<string, string> _mbSearchTextCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _globalSearchTextCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyList<string[]>> _mbRowsByPath = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string[]>? _legendEquipAtbs;
     private Dictionary<string, string[]>? _legendEquipAtbValues;
     private Dictionary<string, string[]>? _chaFightRows;
@@ -56,7 +64,15 @@ public sealed partial class MainWindow : Window
     private Dictionary<string, string[]>? _chaListRows;
     private Dictionary<string, string[]>? _itemRandRows;
     private Dictionary<string, string>? _itemNameById;
+    private Dictionary<string, string>? _itemIconReferenceById;
+    private Dictionary<string, AssetEntry>? _globalImageAssetByKey;
+    private readonly Dictionary<string, BitmapImage> _globalThumbnailCache = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<string[]>>? _chaSkillRowsByPicId;
+
+    private static readonly HashSet<string> GlobalSearchTextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".txt", ".xml", ".cct", ".cmf", ".cfg", ".ini", ".lua", ".json"
+    };
 
     private static IReadOnlySet<string> Ids(params string[] ids) =>
         new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
@@ -289,8 +305,10 @@ public sealed partial class MainWindow : Window
     private void AfterWorkspaceLoaded()
     {
         _mbSearchTextCache.Clear();
+        _mbRowsByPath.Clear();
         _legendEquipAtbs = null;
         _legendEquipAtbValues = null;
+        _globalSearchTextCache.Clear();
         _chaFightRows = null;
         _chaPicRows = null;
         _stateDataRows = null;
@@ -298,7 +316,12 @@ public sealed partial class MainWindow : Window
         _chaListRows = null;
         _itemRandRows = null;
         _itemNameById = null;
+        _itemIconReferenceById = null;
+        _globalImageAssetByKey = null;
+        _globalThumbnailCache.Clear();
         _chaSkillRowsByPicId = null;
+        _globalSearchResults.Clear();
+        ClearGlobalSearchView();
         _dungeonSummaries.Clear();
         _selectedDungeonSummary = null;
         _dungeonSummariesBuilt = false;
@@ -449,6 +472,12 @@ public sealed partial class MainWindow : Window
 
     private void ApplyFilter()
     {
+        if (_currentKind == AssetKind.GlobalSearch)
+        {
+            RefreshGlobalSearch();
+            return;
+        }
+
         if (_currentKind == AssetKind.DungeonSummary)
         {
             RefreshDungeonSummary();
@@ -516,6 +545,2196 @@ public sealed partial class MainWindow : Window
 
         _mbSearchTextCache[key] = text;
         return text.Length > 0;
+    }
+
+    private async void RefreshGlobalSearch()
+    {
+        int generation = ++_globalSearchGeneration;
+        _globalSearchCancellation?.Cancel();
+        _globalSearchCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        _globalSearchCancellation = cancellation;
+        CancellationToken token = cancellation.Token;
+        string[] terms = GetSearchTerms();
+        if (_workspace.Assets.Count == 0)
+        {
+            _globalSearchResults.Clear();
+            ClearGlobalSearchView();
+            GlobalSearchStatusText.Text = "请先打开资源目录或 DPK。";
+            GlobalSearchCountText.Text = "0 条";
+            return;
+        }
+
+        if (terms.Length == 0)
+        {
+            _globalSearchResults.Clear();
+            ClearGlobalSearchView();
+            GlobalSearchStatusText.Text = "输入名称、ID、图标号或路径后开始反查。";
+            GlobalSearchCountText.Text = "0 条";
+            return;
+        }
+
+        GlobalSearchStatusText.Text = "正在整理资料卡，匹配名称、图标、物品部件和关联资源...";
+        GlobalSearchCountText.Text = "扫描中";
+        GlobalSearchEmptyPanel.Visibility = Visibility.Collapsed;
+        BusyRing.IsActive = true;
+
+        AssetEntry[] assets = _workspace.Assets.ToArray();
+        bool lockTaken = false;
+        try
+        {
+            await _globalSearchLock.WaitAsync(token);
+            lockTaken = true;
+            token.ThrowIfCancellationRequested();
+            if (generation != _globalSearchGeneration) return;
+            List<GlobalSearchResultViewModel> results = await Task.Run(() => BuildGlobalSearchResults(assets, terms, token), token);
+            token.ThrowIfCancellationRequested();
+            if (generation != _globalSearchGeneration) return;
+
+            _globalSearchResults = results;
+            GlobalSearchResultList.ItemsSource = _globalSearchResults;
+            GlobalSearchResultCountText.Text = $"{_globalSearchResults.Count:N0} 条";
+            GlobalSearchCountText.Text = $"{_globalSearchResults.Count:N0} 条";
+            GlobalSearchEmptyPanel.Visibility = _globalSearchResults.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            GlobalSearchStatusText.Text = _globalSearchResults.Count == 0
+                ? "没有找到匹配项。可以换名称、ID、图标号或更短的关键词再查。"
+                : $"已整理出 {_globalSearchResults.Count:N0} 张资料卡，相关图标和可跳转资源会显示在右侧。";
+
+            if (_globalSearchResults.Count > 0)
+            {
+                GlobalSearchResultList.SelectedIndex = 0;
+                ShowGlobalSearchResult(_globalSearchResults[0]);
+                _ = LoadGlobalSearchThumbnailsAsync(_globalSearchResults, generation);
+            }
+            else
+            {
+                ShowGlobalSearchResult(null);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (lockTaken)
+                _globalSearchLock.Release();
+            if (generation == _globalSearchGeneration && ReferenceEquals(_globalSearchCancellation, cancellation))
+                BusyRing.IsActive = false;
+        }
+    }
+
+    private List<GlobalSearchResultViewModel> BuildGlobalSearchResults(
+        IReadOnlyList<AssetEntry> assets,
+        IReadOnlyList<string> terms,
+        CancellationToken cancellationToken)
+    {
+        string[][] variants = terms
+            .Select(term => GetSearchTermVariants(term).Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+            .ToArray();
+        var results = new List<GlobalSearchResultViewModel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var mbRowResults = new List<GlobalSearchResultViewModel>();
+        var seenMbRows = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool broadSearch = ShouldRunBroadGlobalSearch(terms);
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
+        foreach (AssetEntry asset in assets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string searchable = $"{asset.ArchiveName}\n{asset.Entry.Path}\n{asset.Name}";
+            if (!GlobalTextMatches(searchable, variants)) continue;
+            AddGlobalSearchResult(results, seen, new GlobalSearchResultViewModel
+            {
+                Title = asset.Kind == AssetKind.MbTable ? GetMbTableDisplayName(asset) : asset.Name,
+                Subtitle = asset.DisplayPath,
+                Category = GetGlobalAssetKindText(asset.Kind),
+                SourcePath = asset.DisplayPath,
+                PreviewText = CreateGlobalAssetSummary(asset),
+                MatchReason = "资源路径或文件名命中",
+                RawText = asset.DisplayPath,
+                SortRank = asset.Kind == AssetKind.MbTable ? 80 : 70,
+                Asset = asset,
+                Links = BuildGlobalSearchLinks(assets, asset, asset.DisplayPath)
+            });
+        }
+
+        foreach (AssetEntry asset in GetGlobalSearchMbTables(assets, broadSearch))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (stopwatch.ElapsedMilliseconds > 4500 && mbRowResults.Count > 0)
+                break;
+            if (mbRowResults.Count >= 520) break;
+            if (!TryGetGlobalSearchText(asset, out string text)) continue;
+
+            string[] lines = SplitTextLines(text);
+            char delimiter = ChooseMbTableDelimiter(lines);
+            string normalizedPath = asset.Entry.Path.Replace('\\', '/').ToLowerInvariant();
+            int tableMatches = 0;
+            for (int index = 0; index < lines.Length && tableMatches < 80 && mbRowResults.Count < 520; index++)
+            {
+                if ((index & 127) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                string line = lines[index];
+                string[] row = SplitMbTableLine(line, delimiter);
+                if (!GlobalMbRowMatchesSearch(normalizedPath, row, line, variants, broadSearch)) continue;
+                tableMatches++;
+                GlobalMbDisplay display = CreateGlobalMbDisplay(assets, asset, row, line, index + 1, includeLinks: false);
+                AddGlobalSearchResult(mbRowResults, seenMbRows, new GlobalSearchResultViewModel
+                {
+                    Title = display.Title,
+                    Subtitle = $"{asset.Entry.Path} · 第 {index + 1:N0} 行",
+                    Category = display.Category,
+                    SourcePath = asset.DisplayPath,
+                    PreviewText = display.PreviewText,
+                    MatchReason = display.MatchReason,
+                    RawText = line,
+                    SortRank = display.SortRank,
+                    Asset = asset,
+                    Links = display.Links
+                });
+            }
+        }
+
+        foreach (GlobalSearchResultViewModel entityResult in BuildGlobalKnowledgeCards(mbRowResults.Take(160).ToArray()))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddGlobalSearchResult(results, seen, entityResult);
+            if (stopwatch.ElapsedMilliseconds > 7000 && results.Count > 0)
+                break;
+        }
+
+        if (broadSearch)
+        {
+        foreach (AssetEntry asset in assets.Where(IsGlobalSearchTextAsset).Take(120))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (results.Count >= 380) break;
+            if (!TryGetGlobalSearchText(asset, out string text)) continue;
+            if (!GlobalTextMatches(text, variants)) continue;
+
+            string snippet = CreateFocusedGlobalSnippet(text, variants, 420);
+            AddGlobalSearchResult(results, seen, new GlobalSearchResultViewModel
+            {
+                Title = asset.Name,
+                Subtitle = asset.DisplayPath,
+                Category = "配置文本",
+                SourcePath = asset.DisplayPath,
+                PreviewText = CreateGlobalTextAssetSummary(asset, snippet),
+                MatchReason = "配置/脚本文本命中",
+                RawText = snippet,
+                SortRank = 90,
+                Asset = asset,
+                Links = BuildGlobalSearchLinks(assets, asset, snippet)
+            });
+        }
+        }
+
+        return results
+            .OrderBy(result => result.SortRank)
+            .ThenBy(result => result.Title, NaturalStringComparer.Instance)
+            .Take(380)
+            .ToList();
+    }
+
+    private GlobalMbDisplay CreateGlobalMbDisplay(
+        IReadOnlyList<AssetEntry> assets,
+        AssetEntry asset,
+        IReadOnlyList<string> row,
+        string rawLine,
+        int sourceRow,
+        bool includeLinks = true)
+    {
+        string tableName = GetMbTableDisplayName(asset);
+        string normalizedPath = asset.Entry.Path.Replace('\\', '/').ToLowerInvariant();
+        var links = includeLinks
+            ? BuildGlobalSearchLinks(assets, asset, rawLine).ToList()
+            : new List<GlobalSearchLinkViewModel>();
+        var linkKeys = new HashSet<string>(links.Select(link => $"{link.Kind}|{link.Path}|{link.Name}"), StringComparer.OrdinalIgnoreCase);
+
+        string title = CreateGlobalMbRowTitle(tableName, row, sourceRow);
+        string category = GetGlobalMbCategory(normalizedPath, tableName);
+        string preview = normalizedPath switch
+        {
+            string path when path.StartsWith("help_bank/bank_tz", StringComparison.Ordinal) =>
+                BuildGlobalSetSummary(row, title, links, linkKeys),
+            string path when path.StartsWith("item/item_set", StringComparison.Ordinal) =>
+                BuildGlobalSetConfigSummary(row, title, links, linkKeys),
+            string path when path.StartsWith("item/", StringComparison.Ordinal) =>
+                BuildGlobalItemSummary(asset, row, title, links, linkKeys),
+            string path when path.StartsWith("object/ride", StringComparison.Ordinal) =>
+                BuildGlobalRideSummary(asset, row, title, links, linkKeys),
+            string path when path.StartsWith("object/cha_list", StringComparison.Ordinal) =>
+                BuildGlobalCharacterSummary(row, title, links, linkKeys),
+            string path when path.StartsWith("object/cha_fight", StringComparison.Ordinal) =>
+                BuildGlobalFightSummary(row, title),
+            string path when path.StartsWith("object/cha_pic", StringComparison.Ordinal) =>
+                BuildGlobalAppearanceSummary(asset, row, title, links, linkKeys),
+            string path when path.StartsWith("object/", StringComparison.Ordinal) =>
+                BuildGlobalObjectSummary(asset, row, title, links, linkKeys),
+            string path when path.StartsWith("quest/", StringComparison.Ordinal) =>
+                BuildGlobalQuestSummary(asset, row, title),
+            string path when path.StartsWith("skill/", StringComparison.Ordinal) =>
+                BuildGlobalSkillSummary(asset, row, title, links, linkKeys),
+            string path when path.StartsWith("pet/car_skill", StringComparison.Ordinal) =>
+                BuildGlobalSkillSummary(asset, row, title, links, linkKeys),
+            string path when path.StartsWith("pet/", StringComparison.Ordinal) =>
+                BuildGlobalPetSummary(asset, row, title, links, linkKeys),
+            _ => BuildGlobalGenericMbSummary(asset, row, title)
+        };
+
+        return new GlobalMbDisplay(
+            title,
+            category,
+            preview,
+            $"{category}命中：{tableName}",
+            GetGlobalMbSortRank(category),
+            links.Take(48).ToArray());
+    }
+
+    private IEnumerable<GlobalSearchResultViewModel> BuildGlobalKnowledgeCards(
+        IReadOnlyList<GlobalSearchResultViewModel> rowResults)
+    {
+        if (rowResults.Count == 0) yield break;
+
+        foreach (IGrouping<string, GlobalSearchResultViewModel> group in rowResults
+                     .GroupBy(GetGlobalKnowledgeKey, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(group => group.Min(result => result.SortRank))
+                     .ThenBy(group => GetGlobalKnowledgeTitle(group), NaturalStringComparer.Instance))
+        {
+            GlobalSearchResultViewModel[] rows = group
+                .OrderBy(result => result.SortRank)
+                .ThenBy(result => result.Title, NaturalStringComparer.Instance)
+                .ToArray();
+            yield return CreateGlobalKnowledgeCard(rows);
+        }
+    }
+
+    private static string GetGlobalKnowledgeKey(GlobalSearchResultViewModel result)
+    {
+        if (TryGetGlobalOwnerTitle(result, out string ownerTitle))
+            return NormalizeGlobalEntityTitle(ownerTitle);
+
+        string title = result.Category == "套装"
+            ? ExtractGlobalSetFamilyName(result.Title)
+            : NormalizeGlobalEntityTitle(result.Title);
+        if (string.IsNullOrWhiteSpace(title))
+            title = NormalizeGlobalEntityTitle(result.SourcePath);
+        return title;
+    }
+
+    private static string GetGlobalKnowledgeTitle(IEnumerable<GlobalSearchResultViewModel> rows)
+    {
+        GlobalSearchResultViewModel first = rows.First();
+        foreach (GlobalSearchResultViewModel row in rows)
+        {
+            if (TryGetGlobalOwnerTitle(row, out string ownerTitle))
+                return NormalizeGlobalEntityTitle(ownerTitle);
+        }
+
+        return first.Category == "套装"
+            ? ExtractGlobalSetFamilyName(first.Title)
+            : NormalizeGlobalEntityTitle(first.Title);
+    }
+
+    private static bool TryGetGlobalOwnerTitle(GlobalSearchResultViewModel result, out string ownerTitle)
+    {
+        ownerTitle = string.Empty;
+        string source = $"{result.SourcePath}\n{result.Subtitle}".Replace('\\', '/');
+        string[] cells = SplitGlobalRawRow(result.RawText);
+
+        if (source.Contains("pet/car_skill", StringComparison.OrdinalIgnoreCase))
+        {
+            string skillName = cells.Length > 0 ? CleanGlobalTitle(cells[0]) : NormalizeGlobalEntityTitle(result.Title);
+            string? owner = cells
+                .Select(ExtractGlobalNameCandidate)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .LastOrDefault(value => !value.Equals(skillName, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(owner))
+            {
+                ownerTitle = owner;
+                return true;
+            }
+        }
+
+        if (source.Contains("pet/pet_type_prompt", StringComparison.OrdinalIgnoreCase))
+        {
+            string? owner = cells
+                .Select(ExtractGlobalNameCandidate)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            if (!string.IsNullOrWhiteSpace(owner))
+            {
+                ownerTitle = owner;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string[] SplitGlobalRawRow(string rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return Array.Empty<string>();
+        string line = rawText.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')[0];
+        if (line.Contains('\t', StringComparison.Ordinal))
+            return line.Split('\t');
+        if (line.Contains(',', StringComparison.Ordinal))
+            return line.Split(',');
+        return Regex.Split(line.Trim(), @"\s+");
+    }
+
+    private GlobalSearchResultViewModel CreateGlobalKnowledgeCard(IReadOnlyList<GlobalSearchResultViewModel> rows)
+    {
+        GlobalSearchResultViewModel first = rows[0];
+        string entityName = GetGlobalKnowledgeTitle(rows);
+        if (string.IsNullOrWhiteSpace(entityName))
+            entityName = first.Title;
+
+        string category = GetGlobalKnowledgeCategory(rows);
+        string[] sourceTables = rows
+            .Select(result => result.Subtitle.Split('·')[0].Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, NaturalStringComparer.Instance)
+            .ToArray();
+        IReadOnlyList<GlobalSearchLinkViewModel> links = EnrichGlobalKnowledgeLinks(
+            MergeGlobalKnowledgeLinks(rows, sourceTables),
+            rows,
+            entityName);
+        string preview = rows.Any(row => row.Category == "套装")
+            ? BuildGlobalSetKnowledgePreview(entityName, rows, sourceTables)
+            : BuildGlobalProfileKnowledgePreview(entityName, rows, sourceTables);
+
+        string rawText = BuildGlobalKnowledgeRawText(rows);
+        return new GlobalSearchResultViewModel
+        {
+            Title = entityName,
+            Subtitle = rows.Count == 1 ? first.Subtitle : $"已整理 {rows.Count:N0} 条关联来源",
+            Category = category,
+            SourcePath = sourceTables.Length == 0 ? first.SourcePath : string.Join("、", sourceTables.Take(4)),
+            PreviewText = preview,
+            MatchReason = category == "套装图鉴"
+                ? "套装图鉴，可查看部件并跳转"
+                : "已整理图标、说明、模型和相关资源",
+            RawText = rawText,
+            SortRank = Math.Max(0, first.SortRank - 1),
+            Asset = first.Asset,
+            Links = links
+        };
+    }
+
+    private string BuildGlobalSetKnowledgePreview(
+        string entityName,
+        IReadOnlyList<GlobalSearchResultViewModel> rows,
+        IReadOnlyList<string> sourceTables)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "套装名称", entityName);
+        AppendGlobalDistinctList(builder, "外观分支", rows.Select(ExtractGlobalSetVariantWithId), 18);
+        AppendGlobalDistinctList(builder, "套装部件", ExtractGlobalFieldValues(rows, "包含物品").Concat(ExtractGlobalFieldValues(rows, "可能关联的物品")), 28);
+        AppendGlobalDistinctList(builder, "可继续追踪", ExtractGlobalFieldValues(rows, "关联物品"), 18);
+        return builder.ToString().Trim();
+    }
+
+    private static string GetGlobalKnowledgeCategory(IReadOnlyList<GlobalSearchResultViewModel> rows)
+    {
+        if (rows.Any(row => row.Category == "套装")) return "套装图鉴";
+        if (rows.Any(row => row.Category == "宠物/骑宠")) return "坐骑资料";
+        if (rows.Any(row => row.Category == "物品")) return "物品资料";
+        if (rows.Any(row => row.Category == "角色/怪物")) return "角色/怪物资料";
+        if (rows.Any(row => row.Category == "外观/模型")) return "外观资料";
+        return $"{rows[0].Category}资料";
+    }
+
+    private IReadOnlyList<GlobalSearchLinkViewModel> EnrichGlobalKnowledgeLinks(
+        IReadOnlyList<GlobalSearchLinkViewModel> sourceLinks,
+        IReadOnlyList<GlobalSearchResultViewModel> rows,
+        string entityName)
+    {
+        var links = sourceLinks.ToList();
+        var seen = new HashSet<string>(
+            links.Select(GetGlobalSearchLinkKey),
+            StringComparer.OrdinalIgnoreCase);
+
+        AddGlobalProfileIconLink(links, seen, entityName, "主图标");
+        EnrichGlobalRelatedProfileResources(links, seen, rows, entityName);
+        foreach (string id in rows.SelectMany(row => ExtractGlobalNumericTokens(row.Title)
+                     .Concat(ExtractGlobalNumericTokens(row.PreviewText)))
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Take(6))
+        {
+            AddGlobalProfileIconLink(links, seen, id, "关联图标");
+        }
+
+        foreach (string text in rows.Take(1).Select(row => row.RawText))
+        {
+            foreach (GlobalSearchLinkViewModel link in BuildGlobalSearchLinks(_workspace.Assets, rows[0].Asset ?? _workspace.Assets.First(), text))
+            {
+                if (link.Kind.Contains("源", StringComparison.Ordinal)) continue;
+                string key = GetGlobalSearchLinkKey(link);
+                if (!seen.Add(key)) continue;
+                links.Add(link);
+                if (links.Count >= 72) break;
+            }
+
+            if (links.Count >= 72) break;
+        }
+
+        return links
+            .OrderBy(GetGlobalKnowledgeLinkRank)
+            .ThenBy(link => link.Name, NaturalStringComparer.Instance)
+            .Take(72)
+            .ToArray();
+    }
+
+    private static string GetGlobalSearchLinkKey(GlobalSearchLinkViewModel link) =>
+        link.Asset is not null
+            ? link.Asset.DisplayPath
+            : $"{link.Kind}|{link.Path}|{link.Name}";
+
+    private void AddGlobalProfileIconLink(
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen,
+        string idOrName,
+        string detail)
+    {
+        AssetEntry? icon = FindItemIconAsset(idOrName) ?? FindGlobalImageAsset(idOrName);
+        if (icon is null) return;
+        AddGlobalSearchLink(links, seen, icon, "图标", detail);
+    }
+
+    private void EnrichGlobalRelatedProfileResources(
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen,
+        IReadOnlyList<GlobalSearchResultViewModel> rows,
+        string entityName)
+    {
+        foreach (string name in CollectGlobalProfileNames(entityName, rows)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Take(4))
+        {
+            AddGlobalRowsByName("object/ride_list.txt", name, links, seen, 4);
+            AddGlobalRowsByName("pet/pet_list.txt", name, links, seen, 4);
+            AddGlobalRowsByName("pet/pet_list_group.txt", name, links, seen, 4);
+            AddGlobalRowsByName("pet/pet_type_prompt.txt", name, links, seen, 3);
+            AddGlobalRowsByName("pet/car_skill.txt", name, links, seen, 8);
+            AddGlobalRowsByName("object/cha_list.txt", name, links, seen, 4);
+            AddGlobalRowsByName("object/cha_pic.txt", name, links, seen, 4);
+            if (links.Count >= 72) break;
+        }
+    }
+
+    private static IEnumerable<string> CollectGlobalProfileNames(
+        string entityName,
+        IReadOnlyList<GlobalSearchResultViewModel> rows)
+    {
+        if (!string.IsNullOrWhiteSpace(entityName))
+            yield return entityName;
+
+        foreach (GlobalSearchResultViewModel row in rows.Take(12))
+        {
+            foreach (string value in new[] { row.Title })
+            {
+                foreach (string cell in SplitGlobalRawRow(value))
+                {
+                    string candidate = ExtractGlobalNameCandidate(cell);
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                        yield return candidate;
+                }
+            }
+        }
+    }
+
+    private void AddGlobalRowsByName(
+        string tablePath,
+        string entityName,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen,
+        int maximum)
+    {
+        if (string.IsNullOrWhiteSpace(entityName)) return;
+        int added = 0;
+        foreach (string[] row in LoadMbRows(tablePath))
+        {
+            if (!RowContainsGlobalEntity(row, entityName)) continue;
+            AddGlobalResourcesFromMbRow(tablePath, row, entityName, links, seen);
+            added++;
+            if (added >= maximum || links.Count >= 140) break;
+        }
+    }
+
+    private void AddGlobalResourcesFromMbRow(
+        string tablePath,
+        IReadOnlyList<string> row,
+        string entityName,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        string normalizedPath = tablePath.Replace('\\', '/').ToLowerInvariant();
+        if (links.Count >= 72) return;
+
+        if (normalizedPath.StartsWith("pet/car_skill", StringComparison.Ordinal))
+        {
+            AddGlobalSkillRowResources(row, links, seen);
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/ride", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_list", StringComparison.Ordinal))
+        {
+            AddGlobalCharacterResourcesByRoleId(GetCell(row, 2), links, seen);
+            AddGlobalProfileIconLink(links, seen, GetCell(row, 7), "坐骑/宠物图标");
+            foreach (string id in row.Skip(16).Take(5).SelectMany(ExtractGlobalNumericTokens))
+            {
+                AddGlobalSkillResourcesById(id, links, seen);
+                if (links.Count >= 72) break;
+            }
+
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/cha_list", StringComparison.Ordinal))
+        {
+            AddGlobalAppearanceResourcesByPicId(GetCell(row, 5), links, seen);
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/cha_pic", StringComparison.Ordinal))
+        {
+            AddGlobalAppearanceResourcesFromPicRow(row, links, seen);
+            return;
+        }
+
+        foreach (string cell in row.Take(10))
+        {
+            string cleaned = CleanGlobalMarkup(cell);
+            if (!Regex.IsMatch(cleaned, @"(?i)\.(?:png|jpg|jpeg|dds|tga|pmf|cct|cmf|psf|paf|xml|gfx|wav|ogg)$"))
+                continue;
+            AddGlobalAssetReferencesFromText(cleaned, links, seen, tablePath);
+            if (links.Count >= 72) break;
+        }
+
+        foreach (string id in row.SelectMany(ExtractGlobalNumericTokens)
+                     .Where(value => value.Length is >= 3 and <= 6)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Take(0))
+        {
+            AddGlobalProfileIconLink(links, seen, id, "关联图标");
+        }
+    }
+
+    private void AddGlobalCharacterResourcesByRoleId(
+        string roleId,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        if (string.IsNullOrWhiteSpace(roleId)) return;
+        if (!GetChaListRows().TryGetValue(roleId.Trim(), out string[]? row)) return;
+        AddGlobalAppearanceResourcesByPicId(GetCell(row, 5), links, seen);
+    }
+
+    private void AddGlobalAppearanceResourcesByPicId(
+        string picId,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        if (string.IsNullOrWhiteSpace(picId)) return;
+        if (GetChaPicRows().TryGetValue(picId.Trim(), out string[]? picRow))
+            AddGlobalAppearanceResourcesFromPicRow(picRow, links, seen);
+    }
+
+    private void AddGlobalAppearanceResourcesFromPicRow(
+        IReadOnlyList<string> row,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        string config = GetCell(row, 2);
+        if (!string.IsNullOrWhiteSpace(config))
+        {
+            foreach (AssetEntry linkedAsset in FindAssetsByReferenceFlexible(_workspace.Assets, config).Take(16))
+                AddGlobalSearchLink(links, seen, linkedAsset, GetGlobalAssetKindText(linkedAsset), "模型配置");
+        }
+
+        int checkedCells = 0;
+        foreach (string cell in row)
+        {
+            checkedCells++;
+            if (checkedCells > 12 || links.Count >= 72) break;
+            string cleaned = CleanGlobalMarkup(cell);
+            if (string.IsNullOrWhiteSpace(cleaned)) continue;
+            AddGlobalAssetReferencesFromText(cleaned, links, seen, "外观/模型引用");
+            if (Regex.IsMatch(cleaned, @"(?i)\.(?:png|jpg|jpeg|dds|tga)$") ||
+                Regex.IsMatch(cleaned, @"^[\w.-]{2,}$"))
+            {
+                AddGlobalProfileIconLink(links, seen, NormalizePortraitIconName(cleaned), "头像/图标");
+            }
+        }
+    }
+
+    private void AddGlobalSkillResourcesById(
+        string skillId,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        if (string.IsNullOrWhiteSpace(skillId)) return;
+        int added = 0;
+        foreach (string[] row in LoadMbRows("pet/car_skill.txt"))
+        {
+            if (!row.Any(cell => cell.Trim().Equals(skillId, StringComparison.OrdinalIgnoreCase))) continue;
+            AddGlobalSkillRowResources(row, links, seen);
+            added++;
+            if (added >= 4) break;
+        }
+
+        foreach (AssetEntry table in Array.Empty<AssetEntry>())
+        {
+            if (!TryGetGlobalSearchText(table, out string text) ||
+                !text.Contains(skillId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            AddGlobalSearchLink(links, seen, table, "技能来源", table.Entry.Path);
+            foreach (string line in SplitTextLines(text)
+                         .Where(line => line.Contains(skillId, StringComparison.OrdinalIgnoreCase))
+                         .Take(4))
+            {
+                AddGlobalAssetReferencesFromText(line, links, seen, table.Entry.Path);
+            }
+        }
+    }
+
+    private void AddGlobalSkillRowResources(
+        IReadOnlyList<string> row,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        string skillName = row.Take(2).Select(ExtractGlobalNameCandidate).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+        string skillId = row.FirstOrDefault(cell => IsCompactNumericCell(cell.Trim()))?.Trim() ?? string.Empty;
+        string iconId = row.Skip(1)
+            .FirstOrDefault(cell => IsCompactNumericCell(cell.Trim()) &&
+                                    !cell.Trim().Equals(skillId, StringComparison.OrdinalIgnoreCase))?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(iconId))
+            AddGlobalProfileIconLink(links, seen, iconId, string.IsNullOrWhiteSpace(skillName) ? "技能UI" : $"技能UI：{skillName}");
+        if (!string.IsNullOrWhiteSpace(skillId))
+        {
+            AddGlobalSyntheticLink(
+                links,
+                seen,
+                $"skill:{skillId}",
+                "技能描述",
+                string.IsNullOrWhiteSpace(skillName) ? skillId : skillName,
+                skillId,
+                FormatGlobalSkillLine(row, string.Empty));
+        }
+    }
+
+    private void AddGlobalAssetReferencesFromText(
+        string text,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen,
+        string detail)
+    {
+        if (links.Count >= 72) return;
+        string cleanedText = CleanGlobalMarkup(text);
+        foreach (Match match in Regex.Matches(cleanedText, @"(?i)(?:[\w.-]+[\\/])+[\w.-]+\.(?:png|jpg|jpeg|dds|tga|pmf|cct|cmf|psf|paf|xml|txt|gfx|wav|ogg)"))
+        {
+            foreach (AssetEntry asset in FindAssetsByReferenceFlexible(_workspace.Assets, match.Value).Take(6))
+                AddGlobalSearchLink(links, seen, asset, GetGlobalAssetKindText(asset), detail);
+            if (links.Count >= 72) break;
+        }
+
+        foreach (Match match in Regex.Matches(cleanedText, @"(?i)\b[\w.-]+\.(?:png|jpg|jpeg|dds|tga|pmf|cct|cmf|psf|paf|xml|txt|gfx|wav|ogg)\b"))
+        {
+            foreach (AssetEntry asset in FindAssetsByReferenceFlexible(_workspace.Assets, match.Value).Take(6))
+                AddGlobalSearchLink(links, seen, asset, GetGlobalAssetKindText(asset), detail);
+            if (links.Count >= 72) break;
+        }
+
+        foreach (string token in ExtractGlobalResourceTokens(cleanedText).Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
+        {
+            foreach (AssetEntry asset in FindAssetsByReferenceFlexible(_workspace.Assets, token).Take(6))
+                AddGlobalSearchLink(links, seen, asset, GetGlobalAssetKindText(asset), detail);
+            if (links.Count >= 72) break;
+        }
+    }
+
+    private static bool RowContainsGlobalEntity(IReadOnlyList<string> row, string entityName)
+    {
+        string normalizedEntity = NormalizeGlobalEntityTitle(entityName);
+        if (string.IsNullOrWhiteSpace(normalizedEntity)) return false;
+        foreach (string cell in row)
+        {
+            string cleaned = CleanGlobalMarkup(cell);
+            if (cleaned.Equals(normalizedEntity, StringComparison.OrdinalIgnoreCase) ||
+                cleaned.Contains(normalizedEntity, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int GetGlobalKnowledgeLinkRank(GlobalSearchLinkViewModel link)
+    {
+        if (link.Kind.Contains("图标", StringComparison.Ordinal) || link.Kind.Contains("头像", StringComparison.Ordinal)) return 0;
+        if (link.Kind.Contains("模型", StringComparison.Ordinal) || link.Kind.Contains("外观", StringComparison.Ordinal)) return 1;
+        if (link.Kind.Contains("贴图", StringComparison.Ordinal) || link.Kind.Contains("图像", StringComparison.Ordinal)) return 2;
+        if (link.Kind.Contains("物品", StringComparison.Ordinal) || link.Kind.Contains("部件", StringComparison.Ordinal)) return 3;
+        if (link.Kind.Contains("技能", StringComparison.Ordinal) || link.Kind.Contains("状态", StringComparison.Ordinal)) return 4;
+        if (link.Kind.Contains("源", StringComparison.Ordinal) || link.Kind.Contains("来源", StringComparison.Ordinal)) return 9;
+        return 6;
+    }
+
+    private string BuildGlobalProfileKnowledgePreview(
+        string entityName,
+        IReadOnlyList<GlobalSearchResultViewModel> rows,
+        IReadOnlyList<string> sourceTables)
+    {
+        var builder = new StringBuilder();
+        string category = GetGlobalKnowledgeCategory(rows);
+        AppendGlobalValue(builder, "名称", entityName);
+        AppendGlobalValue(builder, "类型", category.Replace("资料", string.Empty));
+        AppendGlobalValue(builder, "说明", ExtractGlobalBestDescription(entityName, rows));
+        AppendGlobalDistinctList(builder, "编号", rows.Select(ExtractGlobalIdFromTitle), 10);
+        AppendGlobalDistinctList(builder, "技能说明", GetGlobalSkillDescriptionLines(entityName, rows), 12);
+        AppendGlobalDistinctList(builder, "可打开资源", rows.SelectMany(result => result.Links)
+            .Where(link => !link.Kind.Contains("源", StringComparison.Ordinal) &&
+                           !link.Kind.Contains("来源", StringComparison.Ordinal))
+            .Select(link => $"{link.Kind}：{link.Name}"), 16);
+        AppendGlobalDistinctList(builder, "核心信息", rows.SelectMany(result => GetLeadingGlobalPreviewLines(result.PreviewText)), 16);
+        return builder.ToString().Trim();
+    }
+
+    private IEnumerable<string> GetGlobalSkillDescriptionLines(
+        string entityName,
+        IReadOnlyList<GlobalSearchResultViewModel> rows)
+    {
+        foreach (GlobalSearchResultViewModel rowResult in rows)
+        {
+            string source = $"{rowResult.SourcePath}\n{rowResult.Subtitle}".Replace('\\', '/');
+            if (!source.Contains("pet/car_skill", StringComparison.OrdinalIgnoreCase) &&
+                !source.Contains("skill/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string line = FormatGlobalSkillLine(SplitGlobalRawRow(rowResult.RawText), entityName);
+            if (!string.IsNullOrWhiteSpace(line))
+                yield return line;
+        }
+
+        foreach (string[] row in LoadMbRows("pet/car_skill.txt"))
+        {
+            if (!RowContainsGlobalEntity(row, entityName)) continue;
+            string line = FormatGlobalSkillLine(row, entityName);
+            if (!string.IsNullOrWhiteSpace(line))
+                yield return line;
+        }
+    }
+
+    private static string FormatGlobalSkillLine(IReadOnlyList<string> row, string entityName)
+    {
+        if (row.Count == 0) return string.Empty;
+        string name = CleanGlobalTitle(ExtractGlobalNameCandidate(GetCell(row, 0)));
+        if (string.IsNullOrWhiteSpace(name))
+            name = CleanGlobalTitle(GetCell(row, 1));
+        string id = row.Skip(1).FirstOrDefault(IsCompactNumericCell) ?? GuessGlobalId(row);
+        string ui = row.Skip(1).FirstOrDefault(cell => IsCompactNumericCell(cell.Trim()) && !cell.Trim().Equals(id, StringComparison.OrdinalIgnoreCase)) ?? string.Empty;
+        string detail = string.Join(" ",
+            row.Skip(2)
+                .Select(CleanGlobalMarkup)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Where(value => !value.Equals(entityName, StringComparison.OrdinalIgnoreCase))
+                .Where(value => !IsCompactNumericCell(value))
+                .Take(4));
+        string suffix = string.IsNullOrWhiteSpace(detail) ? string.Empty : $"：{detail}";
+        string meta = string.IsNullOrWhiteSpace(ui) ? $"ID {id}" : $"ID {id}，UI {ui}";
+        return string.IsNullOrWhiteSpace(name) ? string.Empty : $"{name}（{meta}）{suffix}";
+    }
+
+    private static string ExtractGlobalBestDescription(
+        string entityName,
+        IReadOnlyList<GlobalSearchResultViewModel> rows)
+    {
+        foreach (string text in rows.Select(row => row.RawText).Concat(rows.Select(row => row.PreviewText)))
+        {
+            foreach (string line in SplitGlobalDescriptionCandidates(text))
+            {
+                if (!line.Contains(entityName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (line.Length <= entityName.Length + 6) continue;
+                return line.Length <= 260 ? line : line[..257] + "...";
+            }
+        }
+
+        foreach (string text in rows.Select(row => row.RawText).Concat(rows.Select(row => row.PreviewText)))
+        {
+            string candidate = SplitGlobalDescriptionCandidates(text)
+                .FirstOrDefault(line => line.Length >= 14 && ContainsChinese(line)) ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(candidate))
+                return candidate.Length <= 260 ? candidate : candidate[..257] + "...";
+        }
+
+        return string.Empty;
+    }
+
+    private static IEnumerable<string> SplitGlobalDescriptionCandidates(string text)
+    {
+        string cleaned = CleanGlobalMarkup(text)
+            .Replace("\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\r", "\n", StringComparison.Ordinal);
+        foreach (string line in cleaned.Split('\n', '。', '；', ';')
+                     .Select(line => Regex.Replace(line, @"\s+", " ").Trim())
+                     .Where(line => line.Length > 0))
+        {
+            if (line.Count(char.IsDigit) > Math.Max(8, line.Length / 2)) continue;
+            yield return line;
+        }
+    }
+
+    private static IReadOnlyList<GlobalSearchLinkViewModel> MergeGlobalKnowledgeLinks(
+        IReadOnlyList<GlobalSearchResultViewModel> rows,
+        IReadOnlyList<string> sourceTables)
+    {
+        var links = new List<GlobalSearchLinkViewModel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (GlobalSearchLinkViewModel link in rows.SelectMany(result => result.Links)
+                     .Where(link => !link.Kind.Contains("源", StringComparison.Ordinal) &&
+                                    !link.Kind.Contains("来源", StringComparison.Ordinal)))
+        {
+            string key = $"{link.Kind}|{link.Path}|{link.Name}";
+            if (!seen.Add(key)) continue;
+            links.Add(link);
+            if (links.Count >= 80) break;
+        }
+
+        foreach (string table in sourceTables)
+            AddGlobalSyntheticLink(links, seen, $"source:{table}", "资料来源", System.IO.Path.GetFileName(table), table, "原始资料位置");
+
+        return links;
+    }
+
+    private static string BuildGlobalKnowledgeRawText(IReadOnlyList<GlobalSearchResultViewModel> rows)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("资料卡来源：");
+        foreach (GlobalSearchResultViewModel row in rows.Take(120))
+            builder.AppendLine($"- {row.Title} | {row.Subtitle}");
+        builder.AppendLine();
+        builder.AppendLine("原始命中文本：");
+        foreach (GlobalSearchResultViewModel row in rows.Take(120))
+        {
+            builder.AppendLine($"[{row.Subtitle}]");
+            builder.AppendLine(row.RawText);
+        }
+
+        return builder.ToString().Trim();
+    }
+
+    private static string ExtractGlobalSetFamilyName(string title)
+    {
+        string cleaned = NormalizeGlobalEntityTitle(title);
+        cleaned = Regex.Replace(cleaned, @"^\[[^\]]+\]\s*", string.Empty);
+        cleaned = Regex.Replace(cleaned, @"^\[[^\]]+\]\s*", string.Empty);
+        int splitIndex = cleaned.IndexOf("--", StringComparison.Ordinal);
+        if (splitIndex > 0)
+            cleaned = cleaned[..splitIndex].Trim();
+        int setIndex = cleaned.IndexOf("套装", StringComparison.Ordinal);
+        if (setIndex >= 0)
+            cleaned = cleaned[..(setIndex + "套装".Length)].Trim();
+        return string.IsNullOrWhiteSpace(cleaned) ? NormalizeGlobalEntityTitle(title) : cleaned;
+    }
+
+    private static string NormalizeGlobalEntityTitle(string title)
+    {
+        string cleaned = Regex.Replace(title ?? string.Empty, @"（ID\s*\d+）", string.Empty);
+        cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
+        return cleaned.Trim(' ', '-', '·');
+    }
+
+    private static string ExtractGlobalSetVariantWithId(GlobalSearchResultViewModel result)
+    {
+        string variant = ExtractGlobalSetVariant(result.Title);
+        string id = ExtractGlobalIdFromTitle(result.Title);
+        if (string.IsNullOrWhiteSpace(variant)) return string.Empty;
+        return string.IsNullOrWhiteSpace(id) ? variant : $"{variant}（ID {id}）";
+    }
+
+    private static string ExtractGlobalSetVariant(string title)
+    {
+        Match match = Regex.Match(title, @"--\s*\[([^\]]+)\]");
+        if (match.Success) return match.Groups[1].Value.Trim();
+        string cleaned = NormalizeGlobalEntityTitle(title);
+        int splitIndex = cleaned.IndexOf("--", StringComparison.Ordinal);
+        return splitIndex >= 0 && splitIndex + 2 < cleaned.Length
+            ? cleaned[(splitIndex + 2)..].Trim(' ', '[', ']')
+            : string.Empty;
+    }
+
+    private static string ExtractGlobalIdFromTitle(GlobalSearchResultViewModel result) =>
+        ExtractGlobalIdFromTitle(result.Title);
+
+    private static string ExtractGlobalIdFromTitle(string title)
+    {
+        Match match = Regex.Match(title, @"ID\s*(\d+)");
+        return match.Success ? match.Groups[1].Value : string.Empty;
+    }
+
+    private static IEnumerable<string> ExtractGlobalFieldValues(
+        IEnumerable<GlobalSearchResultViewModel> rows,
+        string label)
+    {
+        string prefix = label + "：";
+        foreach (string line in rows.SelectMany(result => result.PreviewText.Split('\n')))
+        {
+            string trimmed = line.Trim();
+            if (!trimmed.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            foreach (string value in SplitGlobalDisplayList(trimmed[prefix.Length..]))
+                yield return value;
+        }
+    }
+
+    private static IEnumerable<string> GetLeadingGlobalPreviewLines(string preview)
+    {
+        foreach (string line in preview.Split('\n').Select(line => line.Trim()))
+        {
+            if (line.Length == 0 ||
+                line.StartsWith("类型：", StringComparison.Ordinal) ||
+                line.StartsWith("资料类型：", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            yield return line;
+        }
+    }
+
+    private static IEnumerable<string> SplitGlobalDisplayList(string value)
+    {
+        foreach (string part in value.Split(new[] { '、', '，', ';', '；', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string cleaned = Regex.Replace(part, @"，?另有\s*\d+\s*个$", string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                yield return cleaned;
+        }
+    }
+
+    private static void AppendGlobalDistinctList(
+        StringBuilder builder,
+        string label,
+        IEnumerable<string> values,
+        int maximum)
+    {
+        string[] distinct = values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(maximum + 1)
+            .ToArray();
+        if (distinct.Length == 0) return;
+        string suffix = distinct.Length > maximum ? $"，另有 {distinct.Length - maximum} 个" : string.Empty;
+        AppendGlobalValue(builder, label, string.Join("、", distinct.Take(maximum)) + suffix);
+    }
+
+    private void AddGlobalSearchResult(
+        ICollection<GlobalSearchResultViewModel> results,
+        ISet<string> seen,
+        GlobalSearchResultViewModel result)
+    {
+        string key = $"{result.Category}|{result.SourcePath}|{result.RawText}";
+        if (!seen.Add(key)) return;
+        results.Add(result);
+    }
+
+    private bool TryGetGlobalSearchText(AssetEntry asset, out string text)
+    {
+        text = string.Empty;
+        string key = "global:" + asset.DisplayPath;
+        lock (_globalSearchTextCache)
+        {
+            if (_globalSearchTextCache.TryGetValue(key, out string? cachedText))
+            {
+                text = cachedText;
+                return text.Length > 0;
+            }
+        }
+
+        try
+        {
+            byte[] data = _workspace.Extract(asset);
+            if (!TryDecodeTextPreview(asset, data, out text))
+                text = string.Empty;
+        }
+        catch
+        {
+            text = string.Empty;
+        }
+
+        lock (_globalSearchTextCache)
+        {
+            _globalSearchTextCache[key] = text;
+        }
+
+        return text.Length > 0;
+    }
+
+    private static IEnumerable<AssetEntry> GetGlobalSearchMbTables(IReadOnlyList<AssetEntry> assets, bool broadSearch)
+    {
+        foreach (AssetEntry asset in assets.Where(asset => asset.Kind == AssetKind.MbTable && IsPriorityGlobalSearchMbTable(asset.Entry.Path)))
+            yield return asset;
+
+        if (!broadSearch)
+            yield break;
+
+        foreach (AssetEntry asset in assets.Where(asset => asset.Kind == AssetKind.MbTable && !IsPriorityGlobalSearchMbTable(asset.Entry.Path)).Take(80))
+            yield return asset;
+    }
+
+    private static bool IsPriorityGlobalSearchMbTable(string path)
+    {
+        string normalized = path.Replace('\\', '/').ToLowerInvariant();
+        return normalized.StartsWith("help_bank/bank_tz", StringComparison.Ordinal) ||
+               normalized.StartsWith("help_bank/bank_text", StringComparison.Ordinal) ||
+               normalized.StartsWith("item/item_", StringComparison.Ordinal) ||
+               normalized.StartsWith("item/raw_list", StringComparison.Ordinal) ||
+               normalized.StartsWith("object/ride", StringComparison.Ordinal) ||
+               normalized.StartsWith("object/cha_list", StringComparison.Ordinal) ||
+               normalized.StartsWith("object/cha_pic", StringComparison.Ordinal) ||
+               normalized.StartsWith("object/npc_business", StringComparison.Ordinal) ||
+               normalized.StartsWith("pet/", StringComparison.Ordinal) ||
+               normalized.StartsWith("skill/", StringComparison.Ordinal);
+    }
+
+    private static bool ShouldRunBroadGlobalSearch(IReadOnlyList<string> terms) =>
+        terms.Any(term =>
+            term.Contains('/', StringComparison.Ordinal) ||
+            term.Contains('\\', StringComparison.Ordinal) ||
+            term.Contains('.', StringComparison.Ordinal) ||
+            term.Contains('_', StringComparison.Ordinal) ||
+            IsCompactNumericCell(term) ||
+            term.All(character => character < 128));
+
+    private static bool IsGlobalSearchTextAsset(AssetEntry asset) =>
+        asset.Kind != AssetKind.MbTable &&
+        (asset.Kind == AssetKind.Other || asset.Extension.Equals(".cct", StringComparison.OrdinalIgnoreCase)) &&
+        GlobalSearchTextExtensions.Contains(asset.Extension);
+
+    private static bool GlobalMbRowMatchesSearch(
+        string normalizedPath,
+        IReadOnlyList<string> row,
+        string line,
+        IReadOnlyList<string[]> variants,
+        bool broadSearch)
+    {
+        if (!GlobalTextMatches(line, variants))
+            return false;
+
+        if (broadSearch)
+            return true;
+
+        string primaryText = string.Join("\n", GetGlobalPrimarySearchFields(normalizedPath, row));
+        return primaryText.Length > 0 && GlobalTextMatches(primaryText, variants);
+    }
+
+    private static IEnumerable<string> GetGlobalPrimarySearchFields(string normalizedPath, IReadOnlyList<string> row)
+    {
+        if (normalizedPath.StartsWith("pet/pet_type_prompt", StringComparison.Ordinal))
+        {
+            yield return ExtractGlobalNameCandidate(GetCell(row, 2));
+            yield break;
+        }
+
+        if (normalizedPath.StartsWith("pet/car_skill", StringComparison.Ordinal))
+        {
+            yield return CleanGlobalTitle(GetCell(row, 0));
+            yield return CleanGlobalTitle(GetCell(row, 4));
+            yield break;
+        }
+
+        if (normalizedPath.StartsWith("object/ride", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_list", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_list_group", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_dye", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("object/cha_list", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("object/cha_pic", StringComparison.Ordinal))
+        {
+            foreach (int index in new[] { 0, 1, 2, 3, 4, 5, 7, 25, 26 })
+                yield return CleanGlobalTitle(ExtractGlobalNameCandidate(GetCell(row, index)));
+            yield break;
+        }
+
+        foreach (string cell in row.Take(12))
+        {
+            string candidate = CleanGlobalTitle(ExtractGlobalNameCandidate(cell));
+            if (!string.IsNullOrWhiteSpace(candidate))
+                yield return candidate;
+        }
+    }
+
+    private static string[] SplitTextLines(string text) =>
+        text.Replace("\r\n", "\n")
+            .Replace('\r', '\n')
+            .Split('\n')
+            .Select(line => line.TrimEnd())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToArray();
+
+    private static bool GlobalTextMatches(string text, IReadOnlyList<string[]> variants) =>
+        variants.All(group => group.Any(variant => text.Contains(variant, StringComparison.OrdinalIgnoreCase)));
+
+    private static string CreateGlobalMbRowTitle(string tableName, IReadOnlyList<string> row, int sourceRow)
+    {
+        string name = row.Take(12)
+            .Select(ExtractGlobalNameCandidate)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+        string id = row.Take(8).Select(cell => cell.Trim()).FirstOrDefault(IsCompactNumericCell) ?? string.Empty;
+        if (name.Length > 0 && id.Length > 0) return $"{name}（ID {id}）";
+        if (name.Length > 0) return name;
+        if (id.Length > 0) return $"{tableName} · ID {id}";
+        return $"{tableName} · 第 {sourceRow:N0} 行";
+    }
+
+    private static string ExtractGlobalNameCandidate(string value)
+    {
+        string cleaned = CleanGlobalMarkup(value);
+        if (string.IsNullOrWhiteSpace(cleaned)) return string.Empty;
+
+        string firstLine = cleaned
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? cleaned;
+        int splitIndex = firstLine.IndexOf("——", StringComparison.Ordinal);
+        if (splitIndex > 0)
+            firstLine = firstLine[..splitIndex].Trim();
+        splitIndex = firstLine.IndexOf("--", StringComparison.Ordinal);
+        if (splitIndex > 0)
+            firstLine = firstLine[..splitIndex].Trim();
+
+        firstLine = firstLine.Trim(' ', '：', ':', '，', ',', '。');
+        return IsMeaningfulGlobalNameCell(firstLine) ? firstLine : string.Empty;
+    }
+
+    private static bool IsMeaningfulGlobalNameCell(string value) =>
+        value.Length is > 0 and <= 48 &&
+        value.Any(character => char.IsLetter(character) || character > 127) &&
+        !value.Contains('/') &&
+        !value.Contains('\\') &&
+        !value.Contains('*');
+
+    private static bool IsCompactNumericCell(string value) =>
+        value.Length is > 0 and <= 12 && value.All(char.IsDigit);
+
+    private static string CreateGlobalAssetSummary(AssetEntry asset)
+    {
+        ResourceExplanation explanation = ResourceExplanationService.Explain(asset);
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", explanation.FriendlyName);
+        AppendGlobalValue(builder, "用途", explanation.Purpose);
+        AppendGlobalValue(builder, "读取场景", explanation.UsedWhen);
+        AppendGlobalValue(builder, "路径", asset.DisplayPath);
+        return builder.ToString().Trim();
+    }
+
+    private static string CreateGlobalTextAssetSummary(AssetEntry asset, string snippet)
+    {
+        ResourceExplanation explanation = ResourceExplanationService.Explain(asset);
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", explanation.FriendlyName);
+        AppendGlobalValue(builder, "用途", explanation.Purpose);
+        AppendGlobalValue(builder, "命中片段", snippet);
+        return builder.ToString().Trim();
+    }
+
+    private static string GetGlobalMbCategory(string normalizedPath, string tableName)
+    {
+        if (normalizedPath.StartsWith("help_bank/bank_tz", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("item/item_set", StringComparison.Ordinal))
+        {
+            return "套装";
+        }
+
+        if (normalizedPath.StartsWith("object/ride", StringComparison.Ordinal)) return "宠物/骑宠";
+        if (normalizedPath.StartsWith("object/cha_pic", StringComparison.Ordinal)) return "外观/模型";
+        if (normalizedPath.StartsWith("item/", StringComparison.Ordinal)) return "物品";
+        if (normalizedPath.StartsWith("object/cha_list", StringComparison.Ordinal)) return "角色/怪物";
+        if (normalizedPath.StartsWith("object/cha_fight", StringComparison.Ordinal)) return "战斗属性";
+        if (normalizedPath.StartsWith("object/", StringComparison.Ordinal)) return "对象/NPC";
+        if (normalizedPath.StartsWith("quest/", StringComparison.Ordinal)) return "任务";
+        if (normalizedPath.StartsWith("skill/", StringComparison.Ordinal)) return "技能/状态";
+        if (normalizedPath.StartsWith("pet/", StringComparison.Ordinal)) return "宠物/骑宠";
+        return tableName.Contains("骑宠", StringComparison.Ordinal) ? "宠物/骑宠" : "MB 摘要";
+    }
+
+    private static int GetGlobalMbSortRank(string category) => category switch
+    {
+        "套装" => 1,
+        "宠物/骑宠" => 2,
+        "物品" => 3,
+        "外观/模型" => 4,
+        "角色/怪物" => 5,
+        "对象/NPC" => 6,
+        "战斗属性" => 7,
+        "任务" => 8,
+        "技能/状态" => 9,
+        _ => 30
+    };
+
+    private string BuildGlobalSetSummary(
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "套装图鉴/套装说明");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(title));
+        AppendGlobalValue(builder, "套装ID", GetCell(row, 1));
+        AppendGlobalValue(builder, "等级/显示档位", GetCell(row, 2));
+        AppendGlobalValue(builder, "分类/件数配置", FormatGlobalListCell(GetCell(row, 3)));
+        AppendGlobalValue(builder, "组别/品质", GetCell(row, 4));
+        AppendGlobalItemReferences(builder, "包含物品", row.Skip(5), links, linkKeys, 16);
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalSetConfigSummary(
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "套装效果/套装配置");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(title));
+        AppendGlobalValue(builder, "配置ID", GuessGlobalId(row));
+        AppendGlobalItemReferences(builder, "可能关联的物品", row.Skip(2), links, linkKeys, 14);
+        AppendReadableGlobalFields(builder, null, row, new HashSet<int> { 0, 1 }, 6);
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalItemSummary(
+        AssetEntry asset,
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        string normalizedPath = asset.Entry.Path.Replace('\\', '/').ToLowerInvariant();
+        bool rawList = normalizedPath.StartsWith("item/raw_list", StringComparison.Ordinal);
+        string id = rawList ? GetCell(row, 1) : GuessGlobalId(row);
+        string name = rawList ? GetCell(row, 0) : GuessGlobalName(row, title);
+
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", GetItemGlobalType(normalizedPath));
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(name));
+        AppendGlobalValue(builder, "物品ID", id);
+        AppendGlobalItemReferences(builder, "关联物品", row.Skip(2), links, linkKeys, 12);
+        AppendReadableGlobalFields(builder, asset, row, new HashSet<int> { rawList ? 0 : -1, rawList ? 1 : -1 }, 8);
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalRideSummary(
+        AssetEntry asset,
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "骑宠/坐骑");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(GuessGlobalName(row, title)));
+        AppendGlobalValue(builder, "坐骑ID", GetCell(row, 1));
+        AppendGlobalValue(builder, "角色ID", GetCell(row, 2));
+        AppendGlobalValue(builder, "外观/模型组", FormatGlobalListCell(string.Join("*", row.Skip(3).Take(4))));
+        AppendGlobalValue(builder, "移动速度", FormatNumberCell(GetCell(row, 9)));
+        AppendGlobalValue(builder, "可学技能", FormatGlobalListCell(string.Join("*", row.Skip(16).Take(5))));
+        AppendGlobalItemReferences(builder, "关联物品", row.Skip(1), links, linkKeys, 12);
+        AppendReadableGlobalFields(builder, asset, row, new HashSet<int> { 0, 1, 2, 3, 4, 5, 6, 9, 16, 17, 18, 19, 20 }, 6);
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalAppearanceSummary(
+        AssetEntry asset,
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        string config = GetCell(row, 2);
+        string icon = NormalizePortraitIconName(GetCell(row, 25));
+
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "外观/模型配置");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(GuessGlobalName(row, title)));
+        AppendGlobalValue(builder, "外观ID", GetCell(row, 1));
+        AppendGlobalValue(builder, "模型配置", config.Replace('\\', '/'));
+        AppendGlobalValue(builder, "模型部件", FormatGlobalListCell(GetCell(row, 3)));
+        AppendGlobalValue(builder, "缩放", GetCell(row, 4));
+        AppendGlobalValue(builder, "图标", icon);
+
+        foreach (string reference in new[] { config, icon }.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            foreach (AssetEntry linkedAsset in FindAssetsByReferenceFlexible(_workspace.Assets, reference).Take(12))
+                AddGlobalSearchLink(links, linkKeys, linkedAsset, GetGlobalAssetKindText(linkedAsset), "外观配置引用");
+        }
+
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalCharacterSummary(
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        string name = CleanMonsterName(GetCell(row, 0));
+        string roleId = GetCell(row, 1);
+        string fightId = GetCell(row, 4);
+        string picId = GetCell(row, 5);
+        Dictionary<string, string[]> fightRows = GetChaFightRows();
+        Dictionary<string, string[]> picRows = GetChaPicRows();
+
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "怪物/NPC/角色条目");
+        AppendGlobalValue(builder, "名称", string.IsNullOrWhiteSpace(name) ? CleanGlobalTitle(title) : name);
+        AppendGlobalValue(builder, "角色ID", roleId);
+        AppendGlobalValue(builder, "战斗属性ID", fightId);
+        AppendGlobalValue(builder, "外观模型ID", picId);
+
+        if (fightRows.TryGetValue(fightId, out string[]? fightRow))
+        {
+            AppendGlobalValue(builder, "等级", FormatNumberCell(GetCell(fightRow, 1)));
+            AppendGlobalValue(builder, "生命", FormatNumberCell(GetCell(fightRow, 25)));
+            AppendGlobalValue(builder, "伤害", FormatNumberCell(GetCell(fightRow, 28)));
+            AppendGlobalValue(builder, "防御", FormatNumberCell(GetCell(fightRow, 29)));
+            AppendGlobalValue(builder, "法抗", FormatNumberCell(GetCell(fightRow, 32)));
+        }
+
+        if (picRows.TryGetValue(picId, out string[]? picRow))
+        {
+            AppendGlobalValue(builder, "外观名称", GetCell(picRow, 0));
+            AppendGlobalValue(builder, "模型配置", GetCell(picRow, 2));
+        }
+
+        AppendGlobalValue(builder, "常驻状态ID", FormatGlobalListCell(GetCell(row, 13)));
+        AppendGlobalValue(builder, "技能/掉落组ID", FormatGlobalListCell(GetCell(row, 18)));
+        AppendGlobalItemReferences(builder, "可能掉落/奖励物品", row.Skip(18), links, linkKeys, 10);
+        return builder.ToString().Trim();
+    }
+
+    private static string BuildGlobalFightSummary(IReadOnlyList<string> row, string title)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "战斗属性行");
+        AppendGlobalValue(builder, "名称/编号", CleanGlobalTitle(title));
+        AppendGlobalValue(builder, "战斗属性ID", GetCell(row, 0));
+        AppendGlobalValue(builder, "等级", FormatNumberCell(GetCell(row, 1)));
+        AppendGlobalValue(builder, "生命", FormatNumberCell(GetCell(row, 25)));
+        AppendGlobalValue(builder, "伤害", FormatNumberCell(GetCell(row, 28)));
+        AppendGlobalValue(builder, "防御", FormatNumberCell(GetCell(row, 29)));
+        AppendGlobalValue(builder, "法抗", FormatNumberCell(GetCell(row, 32)));
+        AppendGlobalValue(builder, "综合评分/战力", FormatNumberCell(GetCell(row, 49)));
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalObjectSummary(
+        AssetEntry asset,
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", asset.Name.Contains("business", StringComparison.OrdinalIgnoreCase) ? "NPC 商店/兑换配置" : "对象/NPC 配置");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(GuessGlobalName(row, title)));
+        AppendGlobalValue(builder, "ID", GuessGlobalId(row));
+        AppendGlobalItemReferences(builder, "关联物品", row.Skip(1), links, linkKeys, 16);
+        AppendReadableGlobalFields(builder, asset, row, new HashSet<int>(), 8);
+        return builder.ToString().Trim();
+    }
+
+    private static string BuildGlobalQuestSummary(AssetEntry asset, IReadOnlyList<string> row, string title)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "任务/任务文本配置");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(GuessGlobalName(row, title)));
+        AppendGlobalValue(builder, "任务ID", GuessGlobalId(row));
+        AppendReadableGlobalFields(builder, asset, row, new HashSet<int>(), 10);
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalSkillSummary(
+        AssetEntry asset,
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", asset.Entry.Path.Contains("state", StringComparison.OrdinalIgnoreCase) ? "状态/Buff 配置" : "技能配置");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(GuessGlobalName(row, title)));
+        AppendGlobalValue(builder, "ID", GuessGlobalId(row));
+        string uiIcon = row.Skip(1).FirstOrDefault(cell =>
+            IsCompactNumericCell(cell.Trim()) &&
+            !cell.Trim().Equals(GuessGlobalId(row), StringComparison.OrdinalIgnoreCase)) ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(uiIcon))
+        {
+            AppendGlobalValue(builder, "技能UI", uiIcon);
+            AddGlobalProfileIconLink(links, linkKeys, uiIcon, "技能UI");
+        }
+        AppendReadableGlobalFields(builder, asset, row, new HashSet<int>(), 10);
+        return builder.ToString().Trim();
+    }
+
+    private string BuildGlobalPetSummary(
+        AssetEntry asset,
+        IReadOnlyList<string> row,
+        string title,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys)
+    {
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", "宠物/骑宠配置");
+        AppendGlobalValue(builder, "名称", CleanGlobalTitle(GuessGlobalName(row, title)));
+        AppendGlobalValue(builder, "ID", GuessGlobalId(row));
+        AppendGlobalItemReferences(builder, "关联物品", row.Skip(1), links, linkKeys, 10);
+        AppendReadableGlobalFields(builder, asset, row, new HashSet<int>(), 10);
+        return builder.ToString().Trim();
+    }
+
+    private static string BuildGlobalGenericMbSummary(AssetEntry asset, IReadOnlyList<string> row, string title)
+    {
+        ResourceExplanation explanation = ResourceExplanationService.Explain(asset);
+        var builder = new StringBuilder();
+        AppendGlobalValue(builder, "类型", explanation.FriendlyName);
+        AppendGlobalValue(builder, "名称/编号", CleanGlobalTitle(title));
+        AppendReadableGlobalFields(builder, asset, row, new HashSet<int>(), 10);
+        return builder.ToString().Trim();
+    }
+
+    private static string GetItemGlobalType(string normalizedPath)
+    {
+        if (normalizedPath.Contains("brandbox", StringComparison.Ordinal)) return "礼包/宝箱/碎片物品";
+        if (normalizedPath.Contains("rand", StringComparison.Ordinal)) return "掉落组/随机物品组";
+        if (normalizedPath.Contains("set", StringComparison.Ordinal)) return "套装/装备集合";
+        if (normalizedPath.Contains("raw", StringComparison.Ordinal)) return "物品基础名单";
+        return "物品/道具记录";
+    }
+
+    private void AppendGlobalItemReferences(
+        StringBuilder builder,
+        string label,
+        IEnumerable<string> cells,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> linkKeys,
+        int maximum)
+    {
+        Dictionary<string, string> itemNames = GetItemNameById();
+        string[] ids = cells
+            .SelectMany(ExtractGlobalNumericTokens)
+            .Where(id => id.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(maximum + 1)
+            .ToArray();
+        if (ids.Length == 0) return;
+
+        string[] visible = ids.Take(maximum)
+            .Select(id => itemNames.TryGetValue(id, out string? name) && !string.IsNullOrWhiteSpace(name)
+                ? $"{name}（{id}）"
+                : id)
+            .ToArray();
+        string suffix = ids.Length > maximum ? $"，另有 {ids.Length - maximum} 个" : string.Empty;
+        AppendGlobalValue(builder, label, string.Join("、", visible) + suffix);
+
+        foreach (string id in ids.Take(maximum))
+        {
+            itemNames.TryGetValue(id, out string? name);
+            AddGlobalSyntheticLink(
+                links,
+                linkKeys,
+                $"item:{id}",
+                "物品",
+                string.IsNullOrWhiteSpace(name) ? id : name,
+                id,
+                label);
+        }
+    }
+
+    private static void AppendReadableGlobalFields(
+        StringBuilder builder,
+        AssetEntry? asset,
+        IReadOnlyList<string> row,
+        ISet<int> skippedColumns,
+        int maximum)
+    {
+        if (row.Count == 0 || maximum <= 0) return;
+        string[] headers = asset is not null
+            ? GetKnownMbHeaders(asset, row.Count)
+            : Array.Empty<string>();
+        int added = 0;
+        for (int index = 0; index < row.Count && added < maximum; index++)
+        {
+            if (skippedColumns.Contains(index)) continue;
+            string value = GetCell(row, index);
+            if (!IsUsefulGlobalFieldValue(value)) continue;
+
+            string name = asset is not null ? GetColumnName(headers, index) : $"关键内容{index + 1}";
+            if (name.StartsWith("字段", StringComparison.Ordinal) && !IsMeaningfulGlobalNameCell(value)) continue;
+            if (name.Contains("保留", StringComparison.Ordinal)) continue;
+
+            AppendGlobalValue(builder, name, FormatGlobalListCell(value));
+            added++;
+        }
+    }
+
+    private static bool IsUsefulGlobalFieldValue(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        string normalized = value.Trim();
+        if (normalized is "0" or "-1" or "null" or "NULL") return false;
+        return normalized.Length <= 160;
+    }
+
+    private static string GuessGlobalName(IReadOnlyList<string> row, string fallback)
+    {
+        string? name = row.Take(10)
+            .Select(ExtractGlobalNameCandidate)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        return string.IsNullOrWhiteSpace(name) ? CleanGlobalTitle(fallback) : name;
+    }
+
+    private static string GuessGlobalId(IReadOnlyList<string> row)
+    {
+        string? id = row.Take(10)
+            .Select(cell => cell.Trim())
+            .FirstOrDefault(IsCompactNumericCell);
+        return id ?? string.Empty;
+    }
+
+    private static string CleanGlobalTitle(string value)
+    {
+        string cleaned = Regex.Replace(CleanGlobalMarkup(value), @"\s+", " ").Trim();
+        cleaned = Regex.Replace(cleaned, @"（ID\s*\d+）", string.Empty).Trim();
+        return cleaned;
+    }
+
+    private static string CleanGlobalMarkup(string value)
+    {
+        string cleaned = value ?? string.Empty;
+        cleaned = cleaned.Replace("\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\r", "\n", StringComparison.Ordinal);
+        cleaned = Regex.Replace(cleaned, @"<c(?::[0-9A-Fa-f]+)?>", string.Empty, RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(cleaned, @"</?[^>]+>", string.Empty);
+        cleaned = Regex.Replace(cleaned, @"[ \t]+", " ");
+        return cleaned.Trim();
+    }
+
+    private static IEnumerable<string> ExtractGlobalNumericTokens(string value) =>
+        SplitIdList(value)
+            .Select(token => token.Trim())
+            .Where(token => token.Length is > 0 and <= 12 && token.All(char.IsDigit));
+
+    private static string FormatGlobalListCell(string value)
+    {
+        string[] ids = ExtractGlobalNumericTokens(value).ToArray();
+        if (ids.Length >= 2)
+        {
+            string suffix = ids.Length > 16 ? $"，另有 {ids.Length - 16} 个" : string.Empty;
+            return string.Join("、", ids.Take(16)) + suffix;
+        }
+
+        return TrimPreviewCell(value);
+    }
+
+    private static void AppendGlobalValue(StringBuilder builder, string label, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        builder.Append(label);
+        builder.Append("：");
+        builder.AppendLine(value.Trim());
+    }
+
+    private static void AddGlobalSyntheticLink(
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen,
+        string key,
+        string kind,
+        string name,
+        string path,
+        string detail)
+    {
+        if (!seen.Add(key)) return;
+        links.Add(new GlobalSearchLinkViewModel(kind, name, path, detail, null));
+    }
+
+    private static string CreateFocusedGlobalSnippet(string text, IReadOnlyList<string[]> variants, int maximumLength)
+    {
+        string normalized = Regex.Replace(text, @"\s+", " ").Trim();
+        int matchIndex = variants
+            .SelectMany(group => group)
+            .Select(variant => normalized.IndexOf(variant, StringComparison.OrdinalIgnoreCase))
+            .Where(index => index >= 0)
+            .DefaultIfEmpty(0)
+            .Min();
+        int start = Math.Max(0, matchIndex - maximumLength / 3);
+        if (start + maximumLength > normalized.Length)
+            start = Math.Max(0, normalized.Length - maximumLength);
+        string snippet = normalized.Substring(start, Math.Min(maximumLength, normalized.Length - start));
+        if (start > 0) snippet = "..." + snippet;
+        if (start + maximumLength < normalized.Length) snippet += "...";
+        return snippet;
+    }
+
+    private static string CreateGlobalSnippet(string text, int maximumLength)
+    {
+        string normalized = Regex.Replace(text, @"\s+", " ").Trim();
+        return normalized.Length <= maximumLength ? normalized : normalized[..maximumLength] + "...";
+    }
+
+    private IReadOnlyList<GlobalSearchLinkViewModel> BuildGlobalSearchLinks(
+        IReadOnlyList<AssetEntry> assets,
+        AssetEntry source,
+        string text)
+    {
+        var links = new List<GlobalSearchLinkViewModel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddGlobalSearchLink(links, seen, source, "源文件", "命中所在文件");
+        string cleanedText = CleanGlobalMarkup(text);
+
+        foreach (Match match in Regex.Matches(text, @"<ic:(\d+)>", RegexOptions.IgnoreCase))
+        {
+            string iconName = match.Groups[1].Value + ".png";
+            foreach (AssetEntry asset in FindAssetsByReference(assets, iconName).Take(4))
+                AddGlobalSearchLink(links, seen, asset, "图标", $"来自 {match.Value}");
+        }
+
+        foreach (Match match in Regex.Matches(cleanedText, @"(?i)(?:[\w.-]+[\\/])+[\w.-]+\.(?:png|jpg|jpeg|dds|tga|pmf|cct|cmf|psf|paf|xml|txt|gfx|wav|ogg)"))
+        {
+            foreach (AssetEntry asset in FindAssetsByReferenceFlexible(assets, match.Value).Take(8))
+                AddGlobalSearchLink(links, seen, asset, GetGlobalAssetKindText(asset), "文本中的资源路径");
+            if (links.Count >= 60) break;
+        }
+
+        foreach (Match match in Regex.Matches(cleanedText, @"(?i)\b[\w.-]+\.(?:png|jpg|jpeg|dds|tga|pmf|cct|cmf|psf|paf|xml|txt|gfx|wav|ogg)\b"))
+        {
+            foreach (AssetEntry asset in FindAssetsByReferenceFlexible(assets, match.Value).Take(8))
+                AddGlobalSearchLink(links, seen, asset, GetGlobalAssetKindText(asset), "文本中的文件名");
+            if (links.Count >= 60) break;
+        }
+
+        foreach (string token in ExtractGlobalResourceTokens(cleanedText))
+        {
+            foreach (AssetEntry asset in FindAssetsByReferenceFlexible(assets, token).Take(10))
+                AddGlobalSearchLink(links, seen, asset, GetGlobalAssetKindText(asset), "文本中的资源标识");
+            if (links.Count >= 60) break;
+        }
+
+        return links.Take(60).ToArray();
+    }
+
+    private static IEnumerable<AssetEntry> FindAssetsByReference(IReadOnlyList<AssetEntry> assets, string reference)
+    {
+        string normalized = reference.Replace('\\', '/').Trim().Trim('"', '\'', '<', '>', ',', ';');
+        if (normalized.Length == 0) yield break;
+        string fileName = System.IO.Path.GetFileName(normalized);
+        foreach (AssetEntry asset in assets)
+        {
+            string path = asset.Entry.Path.Replace('\\', '/');
+            if (path.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase) ||
+                asset.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase) ||
+                asset.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return asset;
+            }
+        }
+    }
+
+    private static IEnumerable<AssetEntry> FindAssetsByReferenceFlexible(IReadOnlyList<AssetEntry> assets, string reference)
+    {
+        string normalized = reference.Replace('\\', '/').Trim().Trim('"', '\'', '<', '>', ',', ';', '，', '。');
+        if (normalized.Length == 0) yield break;
+
+        var yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (AssetEntry asset in FindAssetsByReference(assets, normalized))
+        {
+            if (yielded.Add(asset.DisplayPath))
+                yield return asset;
+        }
+
+        string fileName = System.IO.Path.GetFileName(normalized);
+        string stem = System.IO.Path.GetFileNameWithoutExtension(fileName);
+        string token = string.IsNullOrWhiteSpace(stem) ? normalized : stem;
+        if (token.Length < 3) yield break;
+
+        foreach (AssetEntry asset in assets
+                     .Where(asset => IsGlobalResourceLinkCandidate(asset))
+                     .Where(asset => GlobalAssetMatchesReferenceToken(asset, token))
+                     .OrderBy(asset => ScoreGlobalLinkedAsset(asset, token))
+                     .ThenBy(asset => asset.Entry.Path, NaturalStringComparer.Instance))
+        {
+            if (yielded.Add(asset.DisplayPath))
+                yield return asset;
+        }
+    }
+
+    private static bool GlobalAssetMatchesReferenceToken(AssetEntry asset, string token)
+    {
+        string path = asset.Entry.Path.Replace('\\', '/');
+        string stem = System.IO.Path.GetFileNameWithoutExtension(asset.Name);
+        return stem.Equals(token, StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("/" + token + "/", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains(token, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGlobalResourceLinkCandidate(AssetEntry asset) =>
+        asset.Kind is AssetKind.Image or AssetKind.Model ||
+        asset.Extension is ".cct" or ".cmf" or ".psf" or ".paf" or ".xml" or ".txt";
+
+    private static int ScoreGlobalLinkedAsset(AssetEntry asset, string token)
+    {
+        string path = asset.Entry.Path.Replace('\\', '/').ToLowerInvariant();
+        string extension = asset.Extension;
+        int score = 50;
+        if (path.Contains("/" + token.ToLowerInvariant() + "/", StringComparison.Ordinal)) score -= 20;
+        if (System.IO.Path.GetFileNameWithoutExtension(asset.Name).Equals(token, StringComparison.OrdinalIgnoreCase)) score -= 10;
+        if (extension.Equals(".cct", StringComparison.OrdinalIgnoreCase)) score -= 30;
+        else if (extension.Equals(".png", StringComparison.OrdinalIgnoreCase) && path.Contains("/icon/", StringComparison.Ordinal)) score -= 28;
+        else if (extension.Equals(".pmf", StringComparison.OrdinalIgnoreCase)) score -= 24;
+        else if (extension.Equals(".dds", StringComparison.OrdinalIgnoreCase)) score -= 18;
+        else if (extension.Equals(".cmf", StringComparison.OrdinalIgnoreCase)) score -= 12;
+        else if (extension.Equals(".psf", StringComparison.OrdinalIgnoreCase)) score -= 8;
+        else if (extension.Equals(".paf", StringComparison.OrdinalIgnoreCase)) score -= 4;
+        return score;
+    }
+
+    private static IEnumerable<string> ExtractGlobalResourceTokens(string text)
+    {
+        foreach (Match match in Regex.Matches(text, @"(?i)\b(?:gw|ys|zj|fb|npc|obj|m|st|hd|mz|pf|pj|qz|yd|xz|sz|my|p)_[A-Za-z0-9_.-]{2,}\b"))
+        {
+            string token = match.Value.Trim('_', '.', '-');
+            if (token.Length < 4) continue;
+            yield return token;
+            if (token.StartsWith("m_", StringComparison.OrdinalIgnoreCase) && token.Length > 2)
+                yield return token[2..];
+        }
+    }
+
+    private static void AddGlobalSearchLink(
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen,
+        AssetEntry asset,
+        string kind,
+        string detail)
+    {
+        string key = asset.DisplayPath;
+        if (!seen.Add(key)) return;
+        links.Add(new GlobalSearchLinkViewModel(kind, asset.Name, asset.DisplayPath, detail, asset));
+    }
+
+    private AssetEntry? FindLinkedGlobalAsset(GlobalSearchLinkViewModel link)
+    {
+        if (link.Asset is not null) return link.Asset;
+
+        if (link.Kind.Contains("图标", StringComparison.OrdinalIgnoreCase))
+            return FindGlobalImageAsset(link.Path) ?? FindGlobalImageAsset(link.Name);
+
+        string normalized = link.Path.Replace('\\', '/').Trim();
+        if (string.IsNullOrWhiteSpace(normalized)) return null;
+        string fileName = System.IO.Path.GetFileName(normalized);
+        return _workspace.Assets.FirstOrDefault(asset =>
+            asset.DisplayPath.Equals(link.Path, StringComparison.OrdinalIgnoreCase) ||
+            asset.Entry.Path.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
+            asset.Entry.Path.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase) ||
+            asset.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private AssetEntry? FindGlobalImageAsset(string reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return null;
+        Dictionary<string, AssetEntry> images = GetGlobalImageAssetsByKey();
+        foreach (string key in GetGlobalImageReferenceKeys(reference))
+        {
+            if (images.TryGetValue(key, out AssetEntry? asset))
+                return asset;
+        }
+
+        return null;
+    }
+
+    private Dictionary<string, AssetEntry> GetGlobalImageAssetsByKey()
+    {
+        if (_globalImageAssetByKey is not null) return _globalImageAssetByKey;
+
+        var result = new Dictionary<string, AssetEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (AssetEntry asset in _workspace.Assets
+                     .Where(asset => asset.Kind == AssetKind.Image)
+                     .OrderByDescending(ScoreGlobalImageAsset)
+                     .ThenBy(asset => asset.Entry.Path, NaturalStringComparer.Instance))
+        {
+            string normalized = asset.Entry.Path.Replace('\\', '/').Trim('/');
+            string fileName = System.IO.Path.GetFileName(normalized);
+            string stem = System.IO.Path.GetFileNameWithoutExtension(fileName);
+            AddGlobalImageKey(result, normalized, asset);
+            AddGlobalImageKey(result, fileName, asset);
+            AddGlobalImageKey(result, stem, asset);
+            if (!fileName.Equals(asset.Name, StringComparison.OrdinalIgnoreCase))
+                AddGlobalImageKey(result, asset.Name, asset);
+        }
+
+        _globalImageAssetByKey = result;
+        return _globalImageAssetByKey;
+    }
+
+    private static int ScoreGlobalImageAsset(AssetEntry asset)
+    {
+        string path = asset.Entry.Path.Replace('\\', '/').ToLowerInvariant();
+        int score = 0;
+        if (path.Contains("/icon/", StringComparison.Ordinal)) score += 80;
+        if (path.Contains("/item/", StringComparison.Ordinal)) score += 70;
+        if (path.Contains("icon", StringComparison.Ordinal)) score += 50;
+        if (path.Contains("portrait", StringComparison.Ordinal)) score += 35;
+        if (path.Contains("head", StringComparison.Ordinal)) score += 25;
+        if (asset.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase)) score += 8;
+        return score;
+    }
+
+    private static void AddGlobalImageKey(IDictionary<string, AssetEntry> keys, string key, AssetEntry asset)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return;
+        keys.TryAdd(key.Trim(), asset);
+    }
+
+    private static IEnumerable<string> GetGlobalImageReferenceKeys(string reference)
+    {
+        string normalized = reference.Replace('\\', '/').Trim().Trim('"', '\'', '<', '>', ',', ';');
+        foreach (Match match in Regex.Matches(normalized, @"<ic:(\d+)>", RegexOptions.IgnoreCase))
+        {
+            yield return match.Groups[1].Value;
+            yield return match.Groups[1].Value + ".png";
+        }
+
+        if (normalized.Length == 0) yield break;
+        string fileName = System.IO.Path.GetFileName(normalized);
+        string stem = System.IO.Path.GetFileNameWithoutExtension(fileName);
+        yield return normalized;
+        yield return fileName;
+        if (!string.IsNullOrWhiteSpace(stem)) yield return stem;
+        if (!normalized.Contains('.', StringComparison.Ordinal))
+        {
+            yield return normalized + ".png";
+            yield return normalized + ".dds";
+        }
+    }
+
+    private static string GetGlobalAssetKindText(AssetKind kind) => kind switch
+    {
+        AssetKind.Image => "图像",
+        AssetKind.Sound => "声音",
+        AssetKind.Model => "模型",
+        AssetKind.Font => "字体",
+        AssetKind.MbTable => "MB 表",
+        AssetKind.DungeonSummary => "副本",
+        _ => "资源"
+    };
+
+    private static string GetGlobalAssetKindText(AssetEntry asset)
+    {
+        string path = asset.Entry.Path.Replace('\\', '/');
+        return asset.Extension switch
+        {
+            ".cct" => "模型配置",
+            ".cmf" => "材质配置",
+            ".psf" => "骨骼",
+            ".paf" => "动作",
+            ".pmf" => "模型部件",
+            ".dds" => "贴图",
+            ".png" or ".jpg" or ".jpeg" or ".tga" or ".ico" => path.Contains("/icon/", StringComparison.OrdinalIgnoreCase) ||
+                                                                  path.Contains("portrait", StringComparison.OrdinalIgnoreCase)
+                ? "图标"
+                : "图像",
+            _ => GetGlobalAssetKindText(asset.Kind)
+        };
+    }
+
+    private async Task LoadGlobalSearchThumbnailsAsync(IReadOnlyList<GlobalSearchResultViewModel> results, int generation)
+    {
+        foreach (GlobalSearchResultViewModel result in results.Take(160))
+        {
+            if (generation != _globalSearchGeneration) return;
+
+            AssetEntry? resultImage = result.Asset?.Kind == AssetKind.Image ? result.Asset : null;
+            foreach (GlobalSearchLinkViewModel link in result.Links.Take(36))
+            {
+                AssetEntry? linkImage = ResolveGlobalSearchLinkThumbnailAsset(link);
+                if (linkImage is null) continue;
+
+                BitmapImage? thumbnail = await LoadGlobalThumbnailAsync(linkImage, generation);
+                if (thumbnail is null) continue;
+
+                link.Thumbnail = thumbnail;
+                resultImage ??= linkImage;
+                if (result.Thumbnail is null)
+                {
+                    result.Thumbnail = thumbnail;
+                    if (Equals(GlobalSearchResultList.SelectedItem, result))
+                        GlobalSearchPreviewImage.Source = result.Thumbnail;
+                }
+            }
+
+            if (result.Thumbnail is null && resultImage is not null)
+            {
+                BitmapImage? thumbnail = await LoadGlobalThumbnailAsync(resultImage, generation);
+                if (thumbnail is null) continue;
+                result.Thumbnail = thumbnail;
+                if (Equals(GlobalSearchResultList.SelectedItem, result))
+                    GlobalSearchPreviewImage.Source = result.Thumbnail;
+            }
+        }
+    }
+
+    private AssetEntry? ResolveGlobalSearchLinkThumbnailAsset(GlobalSearchLinkViewModel link)
+    {
+        if (link.Asset?.Kind == AssetKind.Image) return link.Asset;
+        if (link.Kind.Contains("图标", StringComparison.Ordinal) ||
+            link.Kind.Contains("头像", StringComparison.Ordinal) ||
+            link.Kind.Contains("物品", StringComparison.Ordinal) ||
+            link.Kind.Contains("套装", StringComparison.Ordinal))
+        {
+            return FindItemIconAsset(link.Path) ??
+                   FindItemIconAsset(link.Name) ??
+                   FindGlobalImageAsset(link.Path) ??
+                   FindGlobalImageAsset(link.Name);
+        }
+
+        return FindGlobalImageAsset(link.Path) ?? FindGlobalImageAsset(link.Name);
+    }
+
+    private async Task<BitmapImage?> LoadGlobalThumbnailAsync(AssetEntry image, int generation)
+    {
+        if (_globalThumbnailCache.TryGetValue(image.DisplayPath, out BitmapImage? cached))
+            return cached;
+
+        try
+        {
+            byte[] data = await Task.Run(() => _workspace.Extract(image));
+            if (generation != _globalSearchGeneration) return null;
+            BitmapImage bitmap = await CreateBitmapAsync(data, 96);
+            _globalThumbnailCache[image.DisplayPath] = bitmap;
+            return bitmap;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void GlobalSearchResultList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        GlobalSearchResultViewModel? result = e.AddedItems.OfType<GlobalSearchResultViewModel>().LastOrDefault() ??
+                                              GlobalSearchResultList.SelectedItem as GlobalSearchResultViewModel;
+        ShowGlobalSearchResult(result);
+    }
+
+    private void ShowGlobalSearchResult(GlobalSearchResultViewModel? result)
+    {
+        if (result is null)
+        {
+            GlobalSearchPreviewImage.Source = null;
+            GlobalSearchDetailTitleText.Text = "选择一条结果";
+            GlobalSearchDetailMetaText.Text = string.Empty;
+            GlobalSearchDetailSourceText.Text = string.Empty;
+            GlobalSearchDetailPreviewText.Text = string.Empty;
+            GlobalSearchResourceSectionList.ItemsSource = null;
+            GlobalSearchNoLinksText.Visibility = Visibility.Visible;
+            GlobalSearchRawTextBox.Text = string.Empty;
+            return;
+        }
+
+        GlobalSearchPreviewImage.Source = result.Thumbnail;
+        GlobalSearchDetailTitleText.Text = result.Title;
+        GlobalSearchDetailMetaText.Text = $"{result.Category} · {result.Subtitle}";
+        GlobalSearchDetailSourceText.Text = result.Links.Count > 0
+            ? "点击下方卡片可跳转到图标、模型、来源文件，或继续按物品 ID 追踪。"
+            : result.SourcePath;
+        GlobalSearchDetailPreviewText.Text = result.PreviewText;
+        GlobalSearchResourceSectionList.ItemsSource = result.ResourceSections;
+        GlobalSearchNoLinksText.Visibility = result.Links.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        GlobalSearchRawTextBox.Text = result.RawText;
+    }
+
+    private void GlobalSearchLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: GlobalSearchLinkViewModel link }) return;
+        NavigateGlobalSearchLink(link);
+    }
+
+    private void NavigateGlobalSearchLink(GlobalSearchLinkViewModel link)
+    {
+        AssetEntry? asset = FindLinkedGlobalAsset(link);
+        if (asset is not null)
+        {
+            NavigateToAsset(asset);
+            return;
+        }
+
+        string query = ExtractGlobalNumericTokens(link.Path).FirstOrDefault() ??
+                       ExtractGlobalNumericTokens(link.Name).FirstOrDefault() ??
+                       link.Name;
+        if (!string.IsNullOrWhiteSpace(query))
+            RunGlobalSearchForLink(query);
+    }
+
+    private void NavigateToAsset(AssetEntry asset)
+    {
+        NavigationViewItem? navigationItem = FindNavigationItemForAsset(asset);
+        if (navigationItem is null)
+        {
+            RunGlobalSearchForLink(asset.Name);
+            return;
+        }
+
+        if (!Equals(CategoryNavigation.SelectedItem, navigationItem))
+            CategoryNavigation.SelectedItem = navigationItem;
+
+        SelectFolderForAsset(asset);
+        if (IsCompositeConfigAsset(asset))
+        {
+            SearchBox.Text = string.Empty;
+            ApplyFilter();
+            AssetItemViewModel? compositeItem = _items.FirstOrDefault(candidate =>
+                candidate.Composite?.ConfigAsset.DisplayPath.Equals(asset.DisplayPath, StringComparison.OrdinalIgnoreCase) == true);
+            if (compositeItem is not null)
+            {
+                ListViewBase compositeList = GetActiveAssetList();
+                compositeList.SelectedItem = compositeItem;
+                compositeList.ScrollIntoView(compositeItem);
+                return;
+            }
+        }
+
+        SearchBox.Text = System.IO.Path.GetFileNameWithoutExtension(asset.Name);
+        ApplyFilter();
+
+        AssetItemViewModel? item = _items.FirstOrDefault(candidate =>
+            candidate.Asset?.DisplayPath.Equals(asset.DisplayPath, StringComparison.OrdinalIgnoreCase) == true);
+        if (item is null)
+        {
+            SearchBox.Text = asset.Name;
+            ApplyFilter();
+            item = _items.FirstOrDefault(candidate =>
+                candidate.Asset?.DisplayPath.Equals(asset.DisplayPath, StringComparison.OrdinalIgnoreCase) == true);
+        }
+
+        if (item is null) return;
+        ListViewBase list = GetActiveAssetList();
+        list.SelectedItem = item;
+        list.ScrollIntoView(item);
+    }
+
+    private NavigationViewItem? FindNavigationItemForAsset(AssetEntry asset) =>
+        FindNavigationItemForKind(IsModelResourceAsset(asset) ? AssetKind.Model : asset.Kind);
+
+    private static bool IsModelResourceAsset(AssetEntry asset) =>
+        asset.Kind == AssetKind.Model ||
+        asset.Extension is ".cct" or ".cmf" or ".psf" or ".paf";
+
+    private static bool IsCompositeConfigAsset(AssetEntry asset) =>
+        asset.Extension.Equals(".cct", StringComparison.OrdinalIgnoreCase);
+
+    private void RunGlobalSearchForLink(string query)
+    {
+        if (!Equals(CategoryNavigation.SelectedItem, GlobalSearchNavigationItem))
+            CategoryNavigation.SelectedItem = GlobalSearchNavigationItem;
+        SearchBox.Text = query;
+        RefreshGlobalSearch();
+    }
+
+    private NavigationViewItem? FindNavigationItemForKind(AssetKind kind)
+    {
+        string tag = kind switch
+        {
+            AssetKind.Image => "image",
+            AssetKind.Sound => "sound",
+            AssetKind.Model => "model",
+            AssetKind.Font => "font",
+            AssetKind.MbTable => "mb",
+            AssetKind.GlobalSearch => "global",
+            AssetKind.DungeonSummary => "dungeon",
+            _ => string.Empty
+        };
+        if (string.IsNullOrWhiteSpace(tag)) return null;
+
+        return CategoryNavigation.MenuItems
+            .OfType<NavigationViewItem>()
+            .FirstOrDefault(item => item.Tag is string itemTag &&
+                                    itemTag.Equals(tag, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void SelectFolderForAsset(AssetEntry asset)
+    {
+        string directory = GetNavigationFolderPathForAsset(asset);
+        FolderNodeInfo folder = new(
+            string.IsNullOrWhiteSpace(directory) ? asset.ArchiveName : System.IO.Path.GetFileName(directory),
+            asset.ArchivePath,
+            directory);
+        _selectedFolder = folder;
+        CurrentFolderText.Text = folder.DisplayPath;
+        TreeViewNode? node = FindFolderTreeNode(asset.ArchivePath, directory) ??
+                             FindFolderTreeNode(asset.ArchivePath, string.Empty);
+        if (node is not null)
+            FolderTree.SelectedNode = node;
+    }
+
+    private static string GetNavigationFolderPathForAsset(AssetEntry asset)
+    {
+        string directory = GetInternalDirectory(asset.Entry.Path);
+        if (IsCompositeConfigAsset(asset) &&
+            directory.EndsWith("/config", StringComparison.OrdinalIgnoreCase))
+        {
+            int slash = directory.LastIndexOf('/');
+            return slash < 0 ? string.Empty : directory[..slash];
+        }
+
+        return directory;
+    }
+
+    private TreeViewNode? FindFolderTreeNode(string archivePath, string internalPath)
+    {
+        foreach (TreeViewNode root in FolderTree.RootNodes)
+        {
+            TreeViewNode? match = FindFolderTreeNode(root, archivePath, internalPath);
+            if (match is not null) return match;
+        }
+
+        return null;
+    }
+
+    private static TreeViewNode? FindFolderTreeNode(TreeViewNode node, string archivePath, string internalPath)
+    {
+        if (node.Content is FolderNodeInfo folder &&
+            folder.ArchivePath.Equals(archivePath, StringComparison.OrdinalIgnoreCase) &&
+            folder.InternalPath.Equals(internalPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return node;
+        }
+
+        foreach (TreeViewNode child in node.Children)
+        {
+            TreeViewNode? match = FindFolderTreeNode(child, archivePath, internalPath);
+            if (match is not null) return match;
+        }
+
+        return null;
+    }
+
+    private void ClearGlobalSearchView()
+    {
+        GlobalSearchResultList.ItemsSource = null;
+        GlobalSearchResultCountText.Text = string.Empty;
+        GlobalSearchCountText.Text = string.Empty;
+        GlobalSearchEmptyPanel.Visibility = Visibility.Visible;
+        ShowGlobalSearchResult(null);
     }
 
     private void PopulateAssets()
@@ -1212,12 +3431,18 @@ public sealed partial class MainWindow : Window
             "model" => AssetKind.Model,
             "font" => AssetKind.Font,
             "mb" => AssetKind.MbTable,
+            "global" => AssetKind.GlobalSearch,
             "dungeon" => AssetKind.DungeonSummary,
             "other" => AssetKind.Other,
             _ => AssetKind.Image
         };
         SearchBox.Text = string.Empty;
         ConfigureCategoryUi();
+        if (_currentKind == AssetKind.GlobalSearch)
+        {
+            RefreshGlobalSearch();
+            return;
+        }
         if (_currentKind == AssetKind.DungeonSummary)
         {
             RefreshDungeonSummary();
@@ -1234,6 +3459,7 @@ public sealed partial class MainWindow : Window
         bool models = _currentKind == AssetKind.Model;
         bool fonts = _currentKind == AssetKind.Font;
         bool mbTables = _currentKind == AssetKind.MbTable;
+        bool globalSearch = _currentKind == AssetKind.GlobalSearch;
         bool dungeonSummary = _currentKind == AssetKind.DungeonSummary;
         bool others = _currentKind == AssetKind.Other;
         PageTitleText.Text = _currentKind switch
@@ -1243,6 +3469,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Model => "模型",
             AssetKind.Font => "字体",
             AssetKind.MbTable => "MB 表",
+            AssetKind.GlobalSearch => "全局资料",
             AssetKind.DungeonSummary => "副本怪物",
             _ => "配置与其他"
         };
@@ -1253,6 +3480,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Model => "大尺寸实体预览 PMF 模型，并可转换导出为 OBJ",
             AssetKind.Font => "浏览 font.dpk 内的 TTF、OTF 和 TTC 字体资源",
             AssetKind.MbTable => "浏览 mb.dpk 内的玩法、物品、任务、技能等数据表",
+            AssetKind.GlobalSearch => "输入名字、ID、路径或图标号，自动整理物品、套装、怪物、图标、模型和配置引用",
             AssetKind.DungeonSummary => "按副本汇总怪物头像、核心战斗属性、隐藏状态和掉落组",
             _ => "浏览特效、场景、地形、天空、影片及各类配置文件"
         };
@@ -1263,6 +3491,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Model => "搜索模型名称或路径",
             AssetKind.Font => "搜索字体名称或路径",
             AssetKind.MbTable => "搜索 MB 表名称或路径",
+            AssetKind.GlobalSearch => "搜索名称、ID、图标号、路径或表内容",
             AssetKind.DungeonSummary => "搜索副本或怪物名称",
             _ => "搜索配置、特效、场景或路径"
         };
@@ -1274,8 +3503,10 @@ public sealed partial class MainWindow : Window
         ModelPreviewHost.Visibility = models ? Visibility.Visible : Visibility.Collapsed;
         MbTableDataPanel.Visibility = mbTables ? Visibility.Visible : Visibility.Collapsed;
         GenericPreviewPanel.Visibility = fonts || others ? Visibility.Visible : Visibility.Collapsed;
+        GlobalSearchPanel.Visibility = globalSearch ? Visibility.Visible : Visibility.Collapsed;
         DungeonSummaryPanel.Visibility = dungeonSummary ? Visibility.Visible : Visibility.Collapsed;
         BeginnerModeToggle.Visibility = Visibility.Collapsed;
+        BatchExportButton.IsEnabled = _workspace.Assets.Count > 0 && !globalSearch;
         FolderTreeTitleText.Text = mbTables ? "MB 表目录" : "DPK 目录";
         FolderTreeHintText.Text = mbTables ? "按 mb.dpk 表目录浏览" : "按包内真实路径浏览";
         ModelTextureSelector.Visibility = Visibility.Collapsed;
@@ -1284,14 +3515,14 @@ public sealed partial class MainWindow : Window
         ExpandModelButton.Visibility = models ? Visibility.Visible : Visibility.Collapsed;
         SetMultiSelectMode(false);
         _modelExpanded = false;
-        AssetBrowserPanel.Visibility = dungeonSummary ? Visibility.Collapsed : Visibility.Visible;
-        PreviewPanel.Visibility = dungeonSummary ? Visibility.Collapsed : Visibility.Visible;
+        AssetBrowserPanel.Visibility = dungeonSummary || globalSearch ? Visibility.Collapsed : Visibility.Visible;
+        PreviewPanel.Visibility = dungeonSummary || globalSearch ? Visibility.Collapsed : Visibility.Visible;
         FolderTreeColumn.Width = mbTables ? new GridLength(180) : new GridLength(230);
-        AssetListColumn.MinWidth = mbTables ? 360 : models ? 600 : 650;
-        AssetListColumn.Width = mbTables ? new GridLength(500) : models ? new GridLength(650) : new GridLength(1.35, GridUnitType.Star);
+        AssetListColumn.MinWidth = globalSearch ? 700 : mbTables ? 360 : models ? 600 : 650;
+        AssetListColumn.Width = globalSearch ? new GridLength(1, GridUnitType.Star) : mbTables ? new GridLength(500) : models ? new GridLength(650) : new GridLength(1.35, GridUnitType.Star);
         PreviewColumn.MinWidth = mbTables ? 500 : 360;
         PreviewColumn.Width = models ? new GridLength(1, GridUnitType.Star) : new GridLength(1, GridUnitType.Star);
-        SelectedFooterPanel.Visibility = mbTables || dungeonSummary ? Visibility.Collapsed : Visibility.Visible;
+        SelectedFooterPanel.Visibility = mbTables || dungeonSummary || globalSearch ? Visibility.Collapsed : Visibility.Visible;
         ExpandModelButtonText.Text = "放大模型预览";
         if (!sounds) _mediaPlayer.Pause();
         if (_currentKind != AssetKind.Model) _modelPreview.SetMesh(null);
@@ -1316,6 +3547,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Model => "从左侧选择一个 PMF 模型",
             AssetKind.Font => "从左侧选择一个字体文件",
             AssetKind.MbTable => "从左侧选择一个 MB 表文件",
+            AssetKind.GlobalSearch => "输入关键词后查看反查结果",
             AssetKind.DungeonSummary => "从左侧选择一个副本",
             _ => "从左侧选择一个资源文件"
         };
@@ -1324,6 +3556,7 @@ public sealed partial class MainWindow : Window
         MbTableSummaryText.Text = string.Empty;
         MbTablePreviewBox.Text = string.Empty;
         ClearMbTableView();
+        if (!globalSearch) ClearGlobalSearchView();
         SetGenericPreviewChromeVisibility(_currentKind != AssetKind.MbTable);
         GenericTextExpander.Visibility = Visibility.Collapsed;
         GenericTextPreviewBox.Text = string.Empty;
@@ -2314,6 +4547,10 @@ public sealed partial class MainWindow : Window
         {
             FillHeaders(headers, "场景代码", "场景ID", "关联区域/副本ID", "场景大类", "场景类型", "进入限制/阵营", "保留", "推荐人数", "可视距离", "地图宽", "地图高", "是否副本", "出生X", "出生Y", "缩放", "加载图", "默认出生点", "关联标记", "场景名称", "建议等级");
         }
+        else if (normalizedPath.StartsWith("object/ride", StringComparison.Ordinal))
+        {
+            FillHeaders(headers, "骑宠名称", "骑宠ID", "角色/怪物ID", "外观分类", "模型分类", "外观组", "品质/阶位", "图标/外观ID", "保留", "移动速度", "保留", "保留", "保留", "保留", "保留", "保留", "技能1", "技能2", "技能3", "技能4", "技能5");
+        }
         else if (normalizedPath.StartsWith("object/cha_list", StringComparison.Ordinal))
         {
             FillHeaders(headers, "角色/怪物名称", "角色ID", "等级显示", "角色类型", "战斗属性ID", "外观模型ID", "保留", "保留", "显示/阵营类型", "保留", "难度/玩法标记", "保留", "保留", "出生/常驻状态ID列表", "保留", "保留", "保留", "保留", "技能/效果ID列表", "保留", "保留", "保留", "保留", "保留", "保留", "保留", "保留", "视野/警戒范围", "追击/活动范围");
@@ -2325,6 +4562,18 @@ public sealed partial class MainWindow : Window
         else if (normalizedPath.StartsWith("object/cha_pic", StringComparison.Ordinal))
         {
             FillHeaders(headers, "外观名称", "外观模型ID", "组合配置路径", "挂件/部件列表", "缩放", "颜色/染色", "保留", "保留", "保留", "保留", "外观类型", "性别", "职业", "头部参数", "身体参数", "保留", "保留", "保留", "保留", "保留", "图标", "头像宽", "头像高");
+        }
+        else if (normalizedPath.StartsWith("pet/pet_list", StringComparison.Ordinal))
+        {
+            FillHeaders(headers, "宠物/骑宠名称", "宠物ID", "角色/怪物ID", "分类", "品质/阶位", "成长/等级", "技能组", "状态组", "关联物品", "备注");
+        }
+        else if (normalizedPath.StartsWith("pet/pet_type_prompt", StringComparison.Ordinal))
+        {
+            FillHeaders(headers, "宠物ID", "分类", "说明");
+        }
+        else if (normalizedPath.StartsWith("pet/car_skill", StringComparison.Ordinal))
+        {
+            FillHeaders(headers, "技能ID", "技能名称", "图标/状态", "说明", "消耗", "冷却", "参数");
         }
 
         return headers;
@@ -3447,26 +5696,173 @@ public sealed partial class MainWindow : Window
         return _itemNameById;
     }
 
+    private AssetEntry? FindItemIconAsset(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName)) return null;
+
+        Dictionary<string, string> iconReferences = GetItemIconReferenceById();
+        foreach (string token in GetPotentialItemLookupKeys(idOrName))
+        {
+            if (iconReferences.TryGetValue(token, out string? iconReference))
+            {
+                AssetEntry? image = FindGlobalImageAsset(iconReference);
+                if (image is not null) return image;
+            }
+
+            AssetEntry? directImage = FindGlobalImageAsset(token);
+            if (directImage is not null) return directImage;
+        }
+
+        string normalizedName = CleanGlobalTitle(idOrName);
+        if (normalizedName.Length > 0)
+        {
+            foreach (KeyValuePair<string, string> pair in GetItemNameById())
+            {
+                if (!pair.Value.Equals(normalizedName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (iconReferences.TryGetValue(pair.Key, out string? iconReference))
+                {
+                    AssetEntry? image = FindGlobalImageAsset(iconReference);
+                    if (image is not null) return image;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private Dictionary<string, string> GetItemIconReferenceById()
+    {
+        if (_itemIconReferenceById is not null) return _itemIconReferenceById;
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string tablePath in new[] { "item/item_list.txt", "item/item_list2.txt", "item/item_list3.txt" })
+            AddItemIconReferencesFromRows(result, tablePath, 0, 1);
+        AddItemIconReferencesFromRows(result, "item/raw_list.txt", 1, 0);
+        AddItemIconReferencesFromRows(result, "help_bank/bank_tz.txt", 1, 0);
+        AddItemIconReferencesFromRows(result, "item/item_set.txt", 0, 1);
+
+        _itemIconReferenceById = result;
+        return _itemIconReferenceById;
+    }
+
+    private void AddItemIconReferencesFromRows(
+        IDictionary<string, string> result,
+        string tablePath,
+        int idColumn,
+        int nameColumn)
+    {
+        foreach (string[] row in LoadMbRows(tablePath))
+        {
+            string id = GetCell(row, idColumn);
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            string name = GetCell(row, nameColumn);
+            if (TryFindItemIconReference(row, id, name, out string? reference))
+                result.TryAdd(id, reference);
+        }
+    }
+
+    private bool TryFindItemIconReference(
+        IReadOnlyList<string> row,
+        string id,
+        string name,
+        out string reference)
+    {
+        string[] skippedValues = { id, name };
+
+        foreach (string cell in row)
+        {
+            foreach (Match match in Regex.Matches(cell, @"<ic:(\d+)>", RegexOptions.IgnoreCase))
+            {
+                reference = match.Groups[1].Value;
+                if (FindGlobalImageAsset(reference) is not null) return true;
+            }
+        }
+
+        foreach (string cell in row)
+        {
+            foreach (Match match in Regex.Matches(cell, @"(?i)(?:[\w.-]+/)*[\w.-]+\.(?:png|jpg|jpeg|dds|tga)"))
+            {
+                reference = match.Value;
+                if (FindGlobalImageAsset(reference) is not null) return true;
+            }
+        }
+
+        foreach (string cell in row)
+        {
+            if (skippedValues.Any(value => !string.IsNullOrWhiteSpace(value) &&
+                                           value.Equals(cell.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            foreach (string token in ExtractLooseNumericTokens(cell))
+            {
+                if (token.Equals(id, StringComparison.OrdinalIgnoreCase)) continue;
+                if (token.Length is < 2 or > 6) continue;
+                reference = token;
+                if (FindGlobalImageAsset(reference) is not null) return true;
+            }
+        }
+
+        reference = string.Empty;
+        return false;
+    }
+
+    private static IEnumerable<string> GetPotentialItemLookupKeys(string value)
+    {
+        string normalized = value.Trim();
+        if (normalized.Length == 0) yield break;
+        yield return normalized;
+
+        string cleaned = CleanGlobalTitle(normalized);
+        if (!cleaned.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+            yield return cleaned;
+
+        foreach (string token in ExtractLooseNumericTokens(normalized))
+            yield return token;
+    }
+
+    private static IEnumerable<string> ExtractLooseNumericTokens(string value)
+    {
+        foreach (Match match in Regex.Matches(value, @"\d+"))
+            yield return match.Value;
+    }
+
     private IReadOnlyList<string[]> LoadMbRows(string path)
     {
+        if (_mbRowsByPath.TryGetValue(path, out IReadOnlyList<string[]>? cachedRows))
+            return cachedRows;
+
         AssetEntry? table = _workspace.Assets.FirstOrDefault(asset =>
             asset.Kind == AssetKind.MbTable &&
             asset.Entry.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
-        if (table is null) return Array.Empty<string[]>();
+        if (table is null)
+        {
+            _mbRowsByPath[path] = Array.Empty<string[]>();
+            return _mbRowsByPath[path];
+        }
 
         try
         {
             byte[] data = _workspace.Extract(table);
             if (!TryDecodeTextPreview(table, data, out string text))
-                return Array.Empty<string[]>();
-            return text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')
+            {
+                _mbRowsByPath[path] = Array.Empty<string[]>();
+                return _mbRowsByPath[path];
+            }
+
+            string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            char delimiter = ChooseMbTableDelimiter(lines);
+            _mbRowsByPath[path] = lines
                 .Where(line => !string.IsNullOrWhiteSpace(line))
-                .Select(line => line.Split('\t'))
+                .Select(line => SplitMbTableLine(line, delimiter))
                 .ToArray();
+            return _mbRowsByPath[path];
         }
         catch
         {
-            return Array.Empty<string[]>();
+            _mbRowsByPath[path] = Array.Empty<string[]>();
+            return _mbRowsByPath[path];
         }
     }
 
@@ -3559,6 +5955,14 @@ public sealed partial class MainWindow : Window
         string AttributeId,
         int Mode,
         decimal Value);
+
+    private sealed record GlobalMbDisplay(
+        string Title,
+        string Category,
+        string PreviewText,
+        string MatchReason,
+        int SortRank,
+        IReadOnlyList<GlobalSearchLinkViewModel> Links);
 
     private void SetBusy(bool busy, string? status = null)
     {

@@ -58,6 +58,9 @@
                 <NavigationViewItem x:Name="MbNavigationItem" Content="MB 表" Tag="mb" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE8A5;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="GlobalSearchNavigationItem" Content="全局资料" Tag="global" Foreground="{StaticResource PrimaryTextBrush}">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE721;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="DungeonNavigationItem" Content="副本怪物" Tag="dungeon" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE7FC;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
@@ -595,6 +598,186 @@
                                         </Button>
                                     </StackPanel>
                                 </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <Border x:Name="GlobalSearchPanel"
+                                Grid.ColumnSpan="2"
+                                Visibility="Collapsed"
+                                Background="{StaticResource SurfaceBrush}"
+                                BorderBrush="{StaticResource AppBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="16"
+                                Padding="16">
+                            <Grid RowSpacing="12">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="全局资料中心" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="GlobalSearchStatusText" Text="输入名称、ID、图标号或路径后，自动整理物品、套装、怪物、资源文件和引用关系。" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Padding="10,5" CornerRadius="8" Background="{StaticResource SubtleSurfaceBrush}" VerticalAlignment="Top">
+                                        <TextBlock x:Name="GlobalSearchCountText" Foreground="{StaticResource AccentTextBrush}" FontSize="12" />
+                                    </Border>
+                                </Grid>
+
+                                <Grid Grid.Row="1" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.05*" />
+                                        <ColumnDefinition Width="1.15*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Background="{StaticResource SurfaceAltBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10">
+                                        <Grid RowSpacing="8">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="资料卡" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
+                                                <TextBlock x:Name="GlobalSearchResultCountText" Grid.Column="1" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                            </Grid>
+                                            <Grid Grid.Row="1">
+                                                <ListView x:Name="GlobalSearchResultList"
+                                                          SelectionMode="Single"
+                                                          SelectionChanged="GlobalSearchResultList_SelectionChanged">
+                                                    <ListView.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid MinHeight="82" Padding="8,7" ColumnSpacing="10">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="58" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <Border Width="52" Height="52" CornerRadius="9" Background="{StaticResource SubtleSurfaceBrush}" VerticalAlignment="Top">
+                                                                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                                                                </Border>
+                                                                <StackPanel Grid.Column="1" Spacing="4">
+                                                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                                                        <TextBlock Text="{Binding Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                                        <Border Padding="6,1" CornerRadius="6" Background="{StaticResource AccentSurfaceBrush}">
+                                                                            <TextBlock Text="{Binding Category}" Foreground="{StaticResource AccentTextBrush}" FontSize="10" />
+                                                                        </Border>
+                                                                    </StackPanel>
+                                                                    <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Text="{Binding MatchReason}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ListView.ItemTemplate>
+                                                </ListView>
+                                                <StackPanel x:Name="GlobalSearchEmptyPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                                                    <FontIcon Glyph="&#xE721;" FontSize="36" Foreground="{StaticResource MutedTextBrush}" />
+                                                    <TextBlock Text="输入关键词后开始反查" Foreground="{StaticResource SecondaryTextBrush}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+
+                                    <Border Grid.Column="1" Background="{StaticResource SurfaceAltBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="14">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel Spacing="12">
+                                                <Grid ColumnSpacing="14">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Width="86" Height="86" CornerRadius="12" Background="{StaticResource SubtleSurfaceBrush}">
+                                                        <Image x:Name="GlobalSearchPreviewImage" Stretch="UniformToFill" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                                        <TextBlock x:Name="GlobalSearchDetailTitleText" Text="选择一条结果" Foreground="{StaticResource PrimaryTextBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="GlobalSearchDetailMetaText" Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="GlobalSearchDetailSourceText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Grid>
+
+                                                <Border Background="{StaticResource SurfaceRaisedBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
+                                                    <StackPanel Spacing="8">
+                                                        <TextBlock Text="资料摘要" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
+                                                        <TextBlock x:Name="GlobalSearchDetailPreviewText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <Border Background="{StaticResource SurfaceRaisedBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
+                                                    <StackPanel Spacing="8">
+                                                        <TextBlock Text="图标 / 模型 / 贴图" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
+                                                        <ItemsControl x:Name="GlobalSearchResourceSectionList">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <StackPanel Spacing="6" Margin="0,4,0,10">
+                                                                        <TextBlock Text="{Binding Title}" Foreground="{StaticResource AccentTextBrush}" FontSize="12" FontWeight="SemiBold" />
+                                                                        <ItemsControl ItemsSource="{Binding Links}">
+                                                                            <ItemsControl.ItemTemplate>
+                                                                                <DataTemplate>
+                                                                                    <Button Tag="{Binding}"
+                                                                                            Click="GlobalSearchLink_Click"
+                                                                                            HorizontalAlignment="Stretch"
+                                                                                            HorizontalContentAlignment="Stretch"
+                                                                                            Margin="0,3"
+                                                                                            Padding="8"
+                                                                                            Background="{StaticResource SubtleSurfaceBrush}"
+                                                                                            BorderBrush="{StaticResource AppBorderBrush}"
+                                                                                            BorderThickness="1">
+                                                                                        <Grid ColumnSpacing="10">
+                                                                                            <Grid.ColumnDefinitions>
+                                                                                                <ColumnDefinition Width="54" />
+                                                                                                <ColumnDefinition Width="*" />
+                                                                                                <ColumnDefinition Width="Auto" />
+                                                                                            </Grid.ColumnDefinitions>
+                                                                                            <Border Width="50" Height="50" CornerRadius="8" Background="{StaticResource SurfaceAltBrush}" VerticalAlignment="Top">
+                                                                                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                                                                                            </Border>
+                                                                                            <StackPanel Grid.Column="1" Spacing="2">
+                                                                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                                                    <TextBlock Text="{Binding Name}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="12" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                                                                                    <Border Padding="6,1" CornerRadius="6" Background="{StaticResource AccentSurfaceBrush}">
+                                                                                                        <TextBlock Text="{Binding Kind}" Foreground="{StaticResource AccentTextBrush}" FontSize="10" />
+                                                                                                    </Border>
+                                                                                                </StackPanel>
+                                                                                                <TextBlock Text="{Binding Detail}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10" TextWrapping="Wrap" />
+                                                                                                <TextBlock Text="{Binding Path}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" TextWrapping="Wrap" />
+                                                                                            </StackPanel>
+                                                                                            <FontIcon Grid.Column="2" Glyph="&#xE8A7;" FontSize="12" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                                                                        </Grid>
+                                                                                    </Button>
+                                                                                </DataTemplate>
+                                                                            </ItemsControl.ItemTemplate>
+                                                                        </ItemsControl>
+                                                                    </StackPanel>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                        <TextBlock x:Name="GlobalSearchNoLinksText" Text="暂时没有可跳转的关联资料。" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <Expander Header="原始命中文本（高级）">
+                                                    <TextBox x:Name="GlobalSearchRawTextBox"
+                                                             IsReadOnly="True"
+                                                             AcceptsReturn="True"
+                                                             TextWrapping="NoWrap"
+                                                             FontFamily="Consolas"
+                                                             FontSize="11"
+                                                             Height="220"
+                                                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                             ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                                                </Expander>
+                                            </StackPanel>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
                             </Grid>
                         </Border>
 

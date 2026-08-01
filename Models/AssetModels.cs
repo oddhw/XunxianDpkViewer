@@ -11,6 +11,7 @@ public enum AssetKind
     Model,
     Font,
     MbTable,
+    GlobalSearch,
     DungeonSummary,
     Other
 }
@@ -212,6 +213,144 @@ public sealed class DungeonMonsterViewModel : INotifyPropertyChanged
 public sealed record StatLineViewModel(string Label, string Value, string Note);
 
 public sealed record DropLineViewModel(string Name, string Detail);
+
+public sealed class GlobalSearchResultViewModel : INotifyPropertyChanged
+{
+    private ImageSource? _thumbnail;
+
+    public string Title { get; init; } = string.Empty;
+    public string Subtitle { get; init; } = string.Empty;
+    public string Category { get; init; } = string.Empty;
+    public string SourcePath { get; init; } = string.Empty;
+    public string PreviewText { get; init; } = string.Empty;
+    public string MatchReason { get; init; } = string.Empty;
+    public string RawText { get; init; } = string.Empty;
+    public int SortRank { get; init; }
+    public AssetEntry? Asset { get; init; }
+    public IReadOnlyList<GlobalSearchLinkViewModel> Links { get; init; } = Array.Empty<GlobalSearchLinkViewModel>();
+    public IReadOnlyList<GlobalSearchResourceSectionViewModel> ResourceSections =>
+        GlobalSearchResourceSectionViewModel.Build(Links);
+
+    public ImageSource? Thumbnail
+    {
+        get => _thumbnail;
+        set
+        {
+            if (Equals(_thumbnail, value)) return;
+            _thumbnail = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+public sealed record GlobalSearchResourceSectionViewModel(
+    string Title,
+    string EmptyText,
+    IReadOnlyList<GlobalSearchLinkViewModel> Links)
+{
+    public static IReadOnlyList<GlobalSearchResourceSectionViewModel> Build(IReadOnlyList<GlobalSearchLinkViewModel> links)
+    {
+        if (links.Count == 0) return Array.Empty<GlobalSearchResourceSectionViewModel>();
+
+        var used = new HashSet<GlobalSearchLinkViewModel>();
+        var sections = new List<GlobalSearchResourceSectionViewModel>();
+
+        AddSection(sections, used, "展示图标", "没有找到图标。", links.Where(IsIconLink));
+        AddSection(sections, used, "模型 / 外观", "没有找到模型配置。", links.Where(IsModelLink));
+        AddSection(sections, used, "贴图 / 图片", "没有找到贴图资源。", links.Where(IsTextureLink));
+        AddSection(sections, used, "物品 / 部件", "没有找到关联物品。", links.Where(IsItemLink));
+        AddSection(sections, used, "资料来源", "没有来源记录。", links.Where(IsSourceLink));
+        AddSection(sections, used, "其他线索", "没有其他线索。", links.Where(link => !used.Contains(link)));
+
+        return sections;
+    }
+
+    private static void AddSection(
+        ICollection<GlobalSearchResourceSectionViewModel> sections,
+        ISet<GlobalSearchLinkViewModel> used,
+        string title,
+        string emptyText,
+        IEnumerable<GlobalSearchLinkViewModel> source)
+    {
+        GlobalSearchLinkViewModel[] sectionLinks = source
+            .Where(link => used.Add(link))
+            .Take(24)
+            .ToArray();
+        if (sectionLinks.Length == 0) return;
+        sections.Add(new GlobalSearchResourceSectionViewModel(title, emptyText, sectionLinks));
+    }
+
+    private static bool IsIconLink(GlobalSearchLinkViewModel link) =>
+        ContainsAny(link.Kind, "图标", "头像") ||
+        ContainsAny(link.Path, "/icon/", "\\icon\\", "portrait") ||
+        IsImageLink(link) && !ContainsAny(link.Path, "/texture/", "\\texture\\");
+
+    private static bool IsTextureLink(GlobalSearchLinkViewModel link) =>
+        IsImageLink(link) && !IsIconLink(link) ||
+        ContainsAny(link.Kind, "贴图", "图像");
+
+    private static bool IsImageLink(GlobalSearchLinkViewModel link) =>
+        link.Asset?.Kind == AssetKind.Image ||
+        HasExtension(link.Path, ".png", ".jpg", ".jpeg", ".dds", ".tga", ".ico");
+
+    private static bool IsModelLink(GlobalSearchLinkViewModel link) =>
+        link.Asset?.Kind == AssetKind.Model ||
+        ContainsAny(link.Kind, "模型", "外观") ||
+        HasExtension(link.Path, ".pmf", ".cct", ".cmf", ".psf", ".paf");
+
+    private static bool IsItemLink(GlobalSearchLinkViewModel link) =>
+        ContainsAny(link.Kind, "物品", "部件", "套装", "技能", "状态");
+
+    private static bool IsSourceLink(GlobalSearchLinkViewModel link) =>
+        ContainsAny(link.Kind, "源", "来源", "MB 表") ||
+        HasExtension(link.Path, ".txt");
+
+    private static bool HasExtension(string value, params string[] extensions) =>
+        extensions.Any(extension => value.EndsWith(extension, StringComparison.OrdinalIgnoreCase));
+
+    private static bool ContainsAny(string value, params string[] needles) =>
+        needles.Any(needle => value.Contains(needle, StringComparison.OrdinalIgnoreCase));
+}
+
+public sealed class GlobalSearchLinkViewModel : INotifyPropertyChanged
+{
+    private ImageSource? _thumbnail;
+
+    public GlobalSearchLinkViewModel(
+        string kind,
+        string name,
+        string path,
+        string detail,
+        AssetEntry? asset)
+    {
+        Kind = kind;
+        Name = name;
+        Path = path;
+        Detail = detail;
+        Asset = asset;
+    }
+
+    public string Kind { get; }
+    public string Name { get; }
+    public string Path { get; }
+    public string Detail { get; }
+    public AssetEntry? Asset { get; }
+
+    public ImageSource? Thumbnail
+    {
+        get => _thumbnail;
+        set
+        {
+            if (Equals(_thumbnail, value)) return;
+            _thumbnail = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
 
 public sealed record PmfMesh(
     IReadOnlyList<System.Numerics.Vector3> Vertices,

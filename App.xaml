@@ -1,0 +1,29 @@
+<Application
+    x:Class="XunxianDpkViewer.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <Color x:Key="SystemAccentColor">#5B9BFF</Color>
+            <SolidColorBrush x:Key="AppBackgroundBrush" Color="#0A0E16" />
+            <SolidColorBrush x:Key="TopBarBrush" Color="#101722" />
+            <SolidColorBrush x:Key="NavigationBrush" Color="#0D131D" />
+            <SolidColorBrush x:Key="SurfaceBrush" Color="#121A27" />
+            <SolidColorBrush x:Key="SurfaceAltBrush" Color="#0D1520" />
+            <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#182334" />
+            <SolidColorBrush x:Key="SubtleSurfaceBrush" Color="#101C2A" />
+            <SolidColorBrush x:Key="AppBorderBrush" Color="#26354A" />
+            <SolidColorBrush x:Key="PrimaryTextBrush" Color="#F2F5FA" />
+            <SolidColorBrush x:Key="SecondaryTextBrush" Color="#9AAAC0" />
+            <SolidColorBrush x:Key="MutedTextBrush" Color="#66778E" />
+            <SolidColorBrush x:Key="AccentBrush" Color="#5B9BFF" />
+            <SolidColorBrush x:Key="AccentTextBrush" Color="#8FC1FF" />
+            <SolidColorBrush x:Key="AccentSurfaceBrush" Color="#18365C" />
+            <SolidColorBrush x:Key="CardBackgroundBrush" Color="#121A27" />
+            <SolidColorBrush x:Key="CardBorderBrush" Color="#26354A" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

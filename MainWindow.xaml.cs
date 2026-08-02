@@ -31,6 +31,8 @@ public sealed partial class MainWindow : Window
     private readonly MediaPlayer _mediaPlayer = new();
     private readonly MediaPlayerElement _audioPlayer;
     private readonly ModelPreviewControl _modelPreview;
+    private readonly ModelPreviewControl _globalModelPreview;
+    private readonly UpdateService _updateService = new();
     private readonly SemaphoreSlim _globalSearchLock = new(1, 1);
     private CancellationTokenSource? _globalSearchCancellation;
     private List<AssetEntry> _filteredAssets = new();
@@ -45,11 +47,13 @@ public sealed partial class MainWindow : Window
     private int _sortMode;
     private int _thumbnailGeneration;
     private int _globalSearchGeneration;
+    private int _globalDetailPreviewGeneration;
     private bool _isBusy;
     private bool _modelExpanded;
     private bool _buildingFolderTree;
     private bool _multiSelectMode;
     private bool _settingModelTextureSelection;
+    private bool _checkingForUpdates;
     private FolderNodeInfo? _selectedFolder;
     private int _previewGeneration;
     private readonly Dictionary<string, string> _mbSearchTextCache = new(StringComparer.OrdinalIgnoreCase);
@@ -68,6 +72,8 @@ public sealed partial class MainWindow : Window
     private Dictionary<string, AssetEntry>? _globalImageAssetByKey;
     private readonly Dictionary<string, BitmapImage> _globalThumbnailCache = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<string[]>>? _chaSkillRowsByPicId;
+    private Dictionary<string, List<string[]>>? _globalCarSkillRowsByEntity;
+    private Dictionary<string, (string Path, string[] Row)>? _globalSkillDataRows;
 
     private static readonly HashSet<string> GlobalSearchTextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -207,6 +213,10 @@ public sealed partial class MainWindow : Window
         AudioPlayerHost.Content = _audioPlayer;
         _modelPreview = new ModelPreviewControl();
         ModelPreviewHost.Content = _modelPreview;
+        _globalModelPreview = new ModelPreviewControl();
+        GlobalSearchModelPreviewHost.Content = _globalModelPreview;
+        _modelPreview.AnimationExportRequested += ModelPreview_AnimationExportRequested;
+        _globalModelPreview.AnimationExportRequested += ModelPreview_AnimationExportRequested;
         ExtendsContentIntoTitleBar = false;
         string iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "Xunxian.ico");
         if (File.Exists(iconPath)) AppWindow.SetIcon(iconPath);
@@ -235,6 +245,8 @@ public sealed partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        _ = CheckForUpdatesAsync(silent: true);
+
         string? explicitArgument = Environment.GetCommandLineArgs()
             .FirstOrDefault(argument => argument.StartsWith("--resource-folder=", StringComparison.OrdinalIgnoreCase));
         string? explicitFolder = explicitArgument is null
@@ -320,6 +332,8 @@ public sealed partial class MainWindow : Window
         _globalImageAssetByKey = null;
         _globalThumbnailCache.Clear();
         _chaSkillRowsByPicId = null;
+        _globalCarSkillRowsByEntity = null;
+        _globalSkillDataRows = null;
         _globalSearchResults.Clear();
         ClearGlobalSearchView();
         _dungeonSummaries.Clear();
@@ -901,6 +915,8 @@ public sealed partial class MainWindow : Window
             MergeGlobalKnowledgeLinks(rows, sourceTables),
             rows,
             entityName);
+        IReadOnlyList<GlobalSearchSkillViewModel> skills = BuildGlobalEntitySkills(entityName);
+        IReadOnlyList<GlobalSearchFactViewModel> facts = BuildGlobalEntityFacts(entityName, category, rows, links, skills);
         string preview = rows.Any(row => row.Category == "套装")
             ? BuildGlobalSetKnowledgePreview(entityName, rows, sourceTables)
             : BuildGlobalProfileKnowledgePreview(entityName, rows, sourceTables);
@@ -919,7 +935,9 @@ public sealed partial class MainWindow : Window
             RawText = rawText,
             SortRank = Math.Max(0, first.SortRank - 1),
             Asset = first.Asset,
-            Links = links
+            Links = links,
+            Facts = facts,
+            Skills = skills
         };
     }
 
@@ -951,34 +969,32 @@ public sealed partial class MainWindow : Window
         IReadOnlyList<GlobalSearchResultViewModel> rows,
         string entityName)
     {
-        var links = sourceLinks.ToList();
+        string normalizedEntityName = NormalizeGlobalEntityTitle(entityName);
+        bool hasExactProfile =
+            FindGlobalRowByExactName("object/ride_list.txt", normalizedEntityName) is not null ||
+            FindGlobalRowByExactName("pet/pet_list.txt", normalizedEntityName) is not null;
+        var links = hasExactProfile
+            ? sourceLinks.Where(link => link.Asset?.Kind == AssetKind.MbTable).ToList()
+            : sourceLinks.ToList();
         var seen = new HashSet<string>(
             links.Select(GetGlobalSearchLinkKey),
             StringComparer.OrdinalIgnoreCase);
 
-        AddGlobalProfileIconLink(links, seen, entityName, "主图标");
-        EnrichGlobalRelatedProfileResources(links, seen, rows, entityName);
-        foreach (string id in rows.SelectMany(row => ExtractGlobalNumericTokens(row.Title)
-                     .Concat(ExtractGlobalNumericTokens(row.PreviewText)))
-                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                     .Take(6))
+        if (!hasExactProfile)
         {
-            AddGlobalProfileIconLink(links, seen, id, "关联图标");
-        }
-
-        foreach (string text in rows.Take(1).Select(row => row.RawText))
-        {
-            foreach (GlobalSearchLinkViewModel link in BuildGlobalSearchLinks(_workspace.Assets, rows[0].Asset ?? _workspace.Assets.First(), text))
+            foreach (GlobalSearchResultViewModel row in rows.Take(32))
             {
-                if (link.Kind.Contains("源", StringComparison.Ordinal)) continue;
-                string key = GetGlobalSearchLinkKey(link);
-                if (!seen.Add(key)) continue;
-                links.Add(link);
-                if (links.Count >= 72) break;
+                if (row.Asset?.Kind != AssetKind.MbTable) continue;
+                AddGlobalResourcesFromMbRow(
+                    row.Asset.Entry.Path,
+                    SplitGlobalRawRow(row.RawText),
+                    entityName,
+                    links,
+                    seen);
             }
-
-            if (links.Count >= 72) break;
         }
+
+        EnrichGlobalRelatedProfileResources(links, seen, rows, entityName);
 
         return links
             .OrderBy(GetGlobalKnowledgeLinkRank)
@@ -1009,19 +1025,85 @@ public sealed partial class MainWindow : Window
         IReadOnlyList<GlobalSearchResultViewModel> rows,
         string entityName)
     {
-        foreach (string name in CollectGlobalProfileNames(entityName, rows)
-                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                     .Take(4))
+        string name = NormalizeGlobalEntityTitle(entityName);
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        string[]? ride = FindGlobalRowByExactName("object/ride_list.txt", name);
+        if (ride is not null)
+            AddGlobalResourcesFromMbRow("object/ride_list.txt", ride, name, links, seen);
+
+        string[]? pet = FindGlobalRowByExactName("pet/pet_list.txt", name);
+        if (pet is not null)
+            AddGlobalResourcesFromMbRow("pet/pet_list.txt", pet, name, links, seen);
+
+        var petConfigIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (pet is not null && !string.IsNullOrWhiteSpace(GetCell(pet, 1)))
+            petConfigIds.Add(GetCell(pet, 1).Trim());
+
+        foreach (string[] groupRow in LoadMbRows("pet/pet_list_group.txt"))
         {
-            AddGlobalRowsByName("object/ride_list.txt", name, links, seen, 4);
-            AddGlobalRowsByName("pet/pet_list.txt", name, links, seen, 4);
-            AddGlobalRowsByName("pet/pet_list_group.txt", name, links, seen, 4);
-            AddGlobalRowsByName("pet/pet_type_prompt.txt", name, links, seen, 3);
-            AddGlobalRowsByName("pet/car_skill.txt", name, links, seen, 8);
-            AddGlobalRowsByName("object/cha_list.txt", name, links, seen, 4);
-            AddGlobalRowsByName("object/cha_pic.txt", name, links, seen, 4);
-            if (links.Count >= 72) break;
+            bool exactName = CleanGlobalTitle(GetCell(groupRow, 0))
+                .Equals(name, StringComparison.OrdinalIgnoreCase);
+            bool exactConfig = petConfigIds.Contains(GetCell(groupRow, 2).Trim());
+            if (!exactName && !exactConfig) continue;
+            AddGlobalResourcesFromMbRow("pet/pet_list_group.txt", groupRow, name, links, seen);
         }
+
+        if (GetGlobalCarSkillRowsByEntity().TryGetValue(name, out List<string[]>? skillRows))
+        {
+            foreach (string[] skillRow in skillRows)
+                AddGlobalResourcesFromMbRow("pet/car_skill.txt", skillRow, name, links, seen);
+        }
+
+        AddGlobalRelatedItemResources(name, links, seen);
+    }
+
+    private string[]? FindGlobalRowByExactName(string tablePath, string entityName) =>
+        LoadMbRows(tablePath).FirstOrDefault(row =>
+            CleanGlobalTitle(GetCell(row, 0))
+                .Equals(entityName, StringComparison.OrdinalIgnoreCase));
+
+    private void AddGlobalRelatedItemResources(
+        string entityName,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        foreach (string tablePath in new[] { "item/item_list.txt", "item/item_list2.txt", "item/item_list3.txt" })
+        {
+            foreach (string[] row in LoadMbRows(tablePath))
+            {
+                string itemId = GetCell(row, 0).Trim();
+                string itemName = CleanGlobalTitle(GetCell(row, 1));
+                if (string.IsNullOrWhiteSpace(itemId) ||
+                    string.IsNullOrWhiteSpace(itemName) ||
+                    !itemName.Contains(entityName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                AddGlobalSyntheticLink(
+                    links,
+                    seen,
+                    $"related-item:{itemId}",
+                    "相关物品",
+                    itemName,
+                    itemId,
+                    tablePath);
+
+                AssetEntry? icon = FindItemIconAsset(itemId);
+                if (icon is not null && IsLikelyItemIconAsset(icon))
+                    AddGlobalSearchLink(links, seen, icon, "物品图标", itemName);
+            }
+        }
+    }
+
+    private static bool IsLikelyItemIconAsset(AssetEntry asset)
+    {
+        string path = asset.Entry.Path.Replace('\\', '/');
+        return path.Contains("/icon/item/", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith("icon/item/", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("/image/item/", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith("image/item/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> CollectGlobalProfileNames(
@@ -1079,17 +1161,27 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (normalizedPath.StartsWith("object/ride", StringComparison.Ordinal) ||
-            normalizedPath.StartsWith("pet/pet_list", StringComparison.Ordinal))
+        if (normalizedPath.StartsWith("object/ride", StringComparison.Ordinal))
         {
             AddGlobalCharacterResourcesByRoleId(GetCell(row, 2), links, seen);
-            AddGlobalProfileIconLink(links, seen, GetCell(row, 7), "坐骑/宠物图标");
             foreach (string id in row.Skip(16).Take(5).SelectMany(ExtractGlobalNumericTokens))
             {
                 AddGlobalSkillResourcesById(id, links, seen);
                 if (links.Count >= 72) break;
             }
 
+            return;
+        }
+
+        if (normalizedPath.StartsWith("pet/pet_list_group", StringComparison.Ordinal))
+        {
+            AddGlobalExplicitResourceReferences(row, links, seen, "主图标", imagesOnly: true);
+            return;
+        }
+
+        if (normalizedPath.StartsWith("pet/pet_list", StringComparison.Ordinal))
+        {
+            AddGlobalCharacterResourcesByRoleId(GetCell(row, 2), links, seen);
             return;
         }
 
@@ -1105,22 +1197,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        foreach (string cell in row.Take(10))
-        {
-            string cleaned = CleanGlobalMarkup(cell);
-            if (!Regex.IsMatch(cleaned, @"(?i)\.(?:png|jpg|jpeg|dds|tga|pmf|cct|cmf|psf|paf|xml|gfx|wav|ogg)$"))
-                continue;
-            AddGlobalAssetReferencesFromText(cleaned, links, seen, tablePath);
-            if (links.Count >= 72) break;
-        }
-
-        foreach (string id in row.SelectMany(ExtractGlobalNumericTokens)
-                     .Where(value => value.Length is >= 3 and <= 6)
-                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                     .Take(0))
-        {
-            AddGlobalProfileIconLink(links, seen, id, "关联图标");
-        }
+        AddGlobalExplicitResourceReferences(row, links, seen, tablePath, imagesOnly: false);
     }
 
     private void AddGlobalCharacterResourcesByRoleId(
@@ -1151,24 +1228,17 @@ public sealed partial class MainWindow : Window
         string config = GetCell(row, 2);
         if (!string.IsNullOrWhiteSpace(config))
         {
-            foreach (AssetEntry linkedAsset in FindAssetsByReferenceFlexible(_workspace.Assets, config).Take(16))
-                AddGlobalSearchLink(links, seen, linkedAsset, GetGlobalAssetKindText(linkedAsset), "模型配置");
-        }
-
-        int checkedCells = 0;
-        foreach (string cell in row)
-        {
-            checkedCells++;
-            if (checkedCells > 12 || links.Count >= 72) break;
-            string cleaned = CleanGlobalMarkup(cell);
-            if (string.IsNullOrWhiteSpace(cleaned)) continue;
-            AddGlobalAssetReferencesFromText(cleaned, links, seen, "外观/模型引用");
-            if (Regex.IsMatch(cleaned, @"(?i)\.(?:png|jpg|jpeg|dds|tga)$") ||
-                Regex.IsMatch(cleaned, @"^[\w.-]{2,}$"))
+            foreach (AssetEntry linkedAsset in FindAssetsByReferenceFlexible(_workspace.Assets, config)
+                         .OrderBy(asset => asset.Extension.Equals(".cct", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                         .Take(16))
             {
-                AddGlobalProfileIconLink(links, seen, NormalizePortraitIconName(cleaned), "头像/图标");
+                AddGlobalSearchLink(links, seen, linkedAsset, GetGlobalAssetKindText(linkedAsset), "模型配置");
+                if (linkedAsset.Extension.Equals(".cct", StringComparison.OrdinalIgnoreCase))
+                    AddGlobalCompositeResources(linkedAsset, links, seen);
             }
         }
+
+        AddGlobalExplicitResourceReferences(row, links, seen, "主图标", imagesOnly: true);
     }
 
     private void AddGlobalSkillResourcesById(
@@ -1177,31 +1247,8 @@ public sealed partial class MainWindow : Window
         ISet<string> seen)
     {
         if (string.IsNullOrWhiteSpace(skillId)) return;
-        int added = 0;
-        foreach (string[] row in LoadMbRows("pet/car_skill.txt"))
-        {
-            if (!row.Any(cell => cell.Trim().Equals(skillId, StringComparison.OrdinalIgnoreCase))) continue;
-            AddGlobalSkillRowResources(row, links, seen);
-            added++;
-            if (added >= 4) break;
-        }
-
-        foreach (AssetEntry table in Array.Empty<AssetEntry>())
-        {
-            if (!TryGetGlobalSearchText(table, out string text) ||
-                !text.Contains(skillId, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            AddGlobalSearchLink(links, seen, table, "技能来源", table.Entry.Path);
-            foreach (string line in SplitTextLines(text)
-                         .Where(line => line.Contains(skillId, StringComparison.OrdinalIgnoreCase))
-                         .Take(4))
-            {
-                AddGlobalAssetReferencesFromText(line, links, seen, table.Entry.Path);
-            }
-        }
+        if (GetGlobalSkillDataRows().TryGetValue(skillId.Trim(), out (string Path, string[] Row) skill))
+            AddGlobalSkillDataResources(skill.Path, skill.Row, links, seen);
     }
 
     private void AddGlobalSkillRowResources(
@@ -1209,13 +1256,10 @@ public sealed partial class MainWindow : Window
         ICollection<GlobalSearchLinkViewModel> links,
         ISet<string> seen)
     {
-        string skillName = row.Take(2).Select(ExtractGlobalNameCandidate).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
-        string skillId = row.FirstOrDefault(cell => IsCompactNumericCell(cell.Trim()))?.Trim() ?? string.Empty;
-        string iconId = row.Skip(1)
-            .FirstOrDefault(cell => IsCompactNumericCell(cell.Trim()) &&
-                                    !cell.Trim().Equals(skillId, StringComparison.OrdinalIgnoreCase))?.Trim() ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(iconId))
-            AddGlobalProfileIconLink(links, seen, iconId, string.IsNullOrWhiteSpace(skillName) ? "技能UI" : $"技能UI：{skillName}");
+        string skillName = CleanGlobalTitle(GetCell(row, 0));
+        string skillId = GetCell(row, 1);
+        if (!string.IsNullOrWhiteSpace(skillId))
+            AddGlobalSkillResourcesById(skillId, links, seen);
         if (!string.IsNullOrWhiteSpace(skillId))
         {
             AddGlobalSyntheticLink(
@@ -1227,6 +1271,276 @@ public sealed partial class MainWindow : Window
                 skillId,
                 FormatGlobalSkillLine(row, string.Empty));
         }
+    }
+
+    private void AddGlobalSkillDataResources(
+        string tablePath,
+        IReadOnlyList<string> row,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        string skillName = CleanGlobalTitle(GetCell(row, 0));
+        string skillId = GetCell(row, 1);
+        string iconReference = GetCell(row, 3);
+        AssetEntry? icon = FindGlobalImageAsset(iconReference);
+        if (icon is not null)
+            AddGlobalSearchLink(links, seen, icon, "技能图标", skillName);
+
+        AddGlobalSyntheticLink(
+            links,
+            seen,
+            $"skill-data:{skillId}",
+            "技能说明",
+            string.IsNullOrWhiteSpace(skillName) ? skillId : skillName,
+            tablePath,
+            CleanGlobalMarkup(GetCell(row, 4)));
+    }
+
+    private void AddGlobalExplicitResourceReferences(
+        IReadOnlyList<string> row,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen,
+        string detail,
+        bool imagesOnly)
+    {
+        string extensionPattern = imagesOnly
+            ? @"(?i)(?:[\w.-]+[\\/])*[\w.-]+\.(?:png|jpg|jpeg|dds|tga|ico)"
+            : @"(?i)(?:[\w.-]+[\\/])*[\w.-]+\.(?:png|jpg|jpeg|dds|tga|ico|pmf|cct|cmf|psf|paf|xml|gfx|wav|ogg)";
+        foreach (string cell in row)
+        {
+            string cleaned = CleanGlobalMarkup(cell);
+            foreach (Match match in Regex.Matches(cleaned, extensionPattern))
+            {
+                foreach (AssetEntry asset in FindAssetsByReferenceFlexible(_workspace.Assets, match.Value).Take(8))
+                {
+                    string kind = detail == "主图标" && asset.Kind == AssetKind.Image
+                        ? "主图标"
+                        : GetGlobalAssetKindText(asset);
+                    AddGlobalSearchLink(links, seen, asset, kind, detail);
+                }
+            }
+        }
+    }
+
+    private void AddGlobalCompositeResources(
+        AssetEntry config,
+        ICollection<GlobalSearchLinkViewModel> links,
+        ISet<string> seen)
+    {
+        CompositeModelEntry? composite = FindGlobalCompositeModel(config);
+        if (composite is null) return;
+
+        foreach (CompositeModelPart part in composite.Parts)
+        {
+            AddGlobalSearchLink(links, seen, part.MeshAsset, "模型部件", composite.Name);
+            if (part.TextureBinding is ModelTextureBinding binding)
+                AddGlobalSearchLink(links, seen, binding.TextureAsset, "贴图", binding.DisplayName);
+        }
+    }
+
+    private CompositeModelEntry? FindGlobalCompositeModel(AssetEntry config)
+    {
+        string folder = GetInternalDirectory(config.Entry.Path);
+        if (folder.EndsWith("/config", StringComparison.OrdinalIgnoreCase))
+            folder = GetInternalDirectory(folder);
+
+        return _workspace.FindCompositeModels(config.ArchivePath, folder)
+            .Where(composite => composite.ConfigAsset.DisplayPath.Equals(
+                config.DisplayPath,
+                StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(composite => composite.Parts.Count)
+            .FirstOrDefault();
+    }
+
+    private IReadOnlyList<GlobalSearchSkillViewModel> BuildGlobalEntitySkills(string entityName)
+    {
+        string key = NormalizeGlobalEntityTitle(entityName);
+        if (string.IsNullOrWhiteSpace(key) ||
+            !GetGlobalCarSkillRowsByEntity().TryGetValue(key, out List<string[]>? rows))
+        {
+            return Array.Empty<GlobalSearchSkillViewModel>();
+        }
+
+        var result = new List<GlobalSearchSkillViewModel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string[] row in rows)
+        {
+            string skillName = CleanGlobalTitle(GetCell(row, 0));
+            string skillId = GetCell(row, 1);
+            if (string.IsNullOrWhiteSpace(skillId) || !seen.Add(skillId)) continue;
+
+            string description = string.Empty;
+            AssetEntry? icon = null;
+            if (GetGlobalSkillDataRows().TryGetValue(skillId, out (string Path, string[] Row) skillData))
+            {
+                skillName = CleanGlobalTitle(GetCell(skillData.Row, 0)) is { Length: > 0 } resolvedName
+                    ? resolvedName
+                    : skillName;
+                description = CleanGlobalMarkup(GetCell(skillData.Row, 4));
+                icon = FindGlobalImageAsset(GetCell(skillData.Row, 3));
+            }
+
+            string unlockValue = GetCell(row, 2);
+            string unlockText = unlockValue switch
+            {
+                "" or "0" or "1" => "初始技能",
+                _ => $"解锁值 {FormatNumberCell(unlockValue)}"
+            };
+            result.Add(new GlobalSearchSkillViewModel(
+                skillName,
+                $"ID {skillId}",
+                unlockText,
+                description,
+                icon));
+        }
+
+        return result;
+    }
+
+    private Dictionary<string, List<string[]>> GetGlobalCarSkillRowsByEntity()
+    {
+        if (_globalCarSkillRowsByEntity is not null) return _globalCarSkillRowsByEntity;
+
+        var result = new Dictionary<string, List<string[]>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string[] row in LoadMbRows("pet/car_skill.txt"))
+        {
+            string owner = row
+                .Select(CleanGlobalTitle)
+                .LastOrDefault(value =>
+                    value.Length >= 2 &&
+                    !IsCompactNumericCell(value) &&
+                    !value.Equals(CleanGlobalTitle(GetCell(row, 0)), StringComparison.OrdinalIgnoreCase)) ??
+                string.Empty;
+            owner = NormalizeGlobalEntityTitle(owner);
+            if (string.IsNullOrWhiteSpace(owner)) continue;
+            if (!result.TryGetValue(owner, out List<string[]>? ownerRows))
+            {
+                ownerRows = new List<string[]>();
+                result[owner] = ownerRows;
+            }
+            ownerRows.Add(row);
+        }
+
+        _globalCarSkillRowsByEntity = result;
+        return _globalCarSkillRowsByEntity;
+    }
+
+    private Dictionary<string, (string Path, string[] Row)> GetGlobalSkillDataRows()
+    {
+        if (_globalSkillDataRows is not null) return _globalSkillDataRows;
+
+        var result = new Dictionary<string, (string Path, string[] Row)>(StringComparer.OrdinalIgnoreCase);
+        foreach (AssetEntry table in _workspace.Assets.Where(asset =>
+                     asset.Kind == AssetKind.MbTable &&
+                     asset.Entry.Path.Replace('\\', '/').StartsWith("skill/skill_data_npc_", StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (string[] row in LoadMbRows(table.Entry.Path))
+            {
+                string id = GetCell(row, 1);
+                if (!IsCompactNumericCell(id) || result.ContainsKey(id)) continue;
+                result[id] = (table.Entry.Path, row);
+            }
+        }
+
+        _globalSkillDataRows = result;
+        return _globalSkillDataRows;
+    }
+
+    private IReadOnlyList<GlobalSearchFactViewModel> BuildGlobalEntityFacts(
+        string entityName,
+        string category,
+        IReadOnlyList<GlobalSearchResultViewModel> rows,
+        IReadOnlyList<GlobalSearchLinkViewModel> links,
+        IReadOnlyList<GlobalSearchSkillViewModel> skills)
+    {
+        var result = new List<GlobalSearchFactViewModel>();
+        var labels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(string label, string value)
+        {
+            value = CleanGlobalMarkup(value);
+            if (string.IsNullOrWhiteSpace(value) || !labels.Add(label)) return;
+            result.Add(new GlobalSearchFactViewModel(label, value));
+        }
+
+        string normalizedName = NormalizeGlobalEntityTitle(entityName);
+        Add("名称", normalizedName);
+        Add("类型", category.Replace("资料", string.Empty, StringComparison.Ordinal)
+            .Replace("图鉴", string.Empty, StringComparison.Ordinal));
+
+        string[]? ride = LoadMbRows("object/ride_list.txt")
+            .FirstOrDefault(row => CleanGlobalTitle(GetCell(row, 0)).Equals(normalizedName, StringComparison.OrdinalIgnoreCase));
+        if (ride is not null)
+        {
+            Add("坐骑编号", GetCell(ride, 1));
+            Add("角色编号", GetCell(ride, 2));
+            Add("移动速度", $"{FormatNumberCell(GetCell(ride, 9))} / {FormatNumberCell(GetCell(ride, 10))}");
+        }
+
+        string[]? pet = LoadMbRows("pet/pet_list.txt")
+            .FirstOrDefault(row => CleanGlobalTitle(GetCell(row, 0)).Equals(normalizedName, StringComparison.OrdinalIgnoreCase));
+        if (pet is not null)
+        {
+            Add("宠物配置", GetCell(pet, 1));
+            Add("角色编号", GetCell(pet, 2));
+            Add("坐骑编号", GetCell(pet, 6));
+        }
+
+        string roleId = ride is not null ? GetCell(ride, 2) : pet is not null ? GetCell(pet, 2) : string.Empty;
+        if (!string.IsNullOrWhiteSpace(roleId) &&
+            GetChaListRows().TryGetValue(roleId, out string[]? character))
+        {
+            Add("战斗属性", GetCell(character, 4));
+            Add("外观编号", GetCell(character, 5));
+        }
+
+        string[] relatedItems = new[] { "item/item_list.txt", "item/item_list2.txt", "item/item_list3.txt" }
+            .SelectMany(LoadMbRows)
+            .Where(row => CleanGlobalTitle(GetCell(row, 1)).Contains(normalizedName, StringComparison.OrdinalIgnoreCase))
+            .Select(row => $"{CleanGlobalTitle(GetCell(row, 1))}（ID {GetCell(row, 0)}）")
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToArray();
+        if (relatedItems.Length > 0)
+            Add("相关物品", string.Join("、", relatedItems));
+
+        AssetEntry? modelConfig = links.Select(link => link.Asset)
+            .FirstOrDefault(asset => asset?.Extension.Equals(".cct", StringComparison.OrdinalIgnoreCase) == true);
+        if (modelConfig is not null)
+            Add("模型配置", System.IO.Path.GetFileNameWithoutExtension(modelConfig.Name));
+        int modelPartCount = links.Count(link =>
+            link.Asset?.Extension.Equals(".pmf", StringComparison.OrdinalIgnoreCase) == true);
+        int textureCount = links.Count(link =>
+            link.Asset?.Extension.Equals(".dds", StringComparison.OrdinalIgnoreCase) == true);
+        if (modelPartCount > 0)
+            Add("模型部件", modelPartCount.ToString("N0"));
+        if (textureCount > 0)
+            Add("关联贴图", textureCount.ToString("N0"));
+        if (skills.Count > 0)
+            Add("坐骑技能", $"{skills.Count:N0} 个");
+
+        string petConfigId = pet is null ? string.Empty : GetCell(pet, 1).Trim();
+        string promptDescription = string.IsNullOrWhiteSpace(petConfigId)
+            ? string.Empty
+            : LoadMbRows("pet/pet_type_prompt.txt")
+                .Where(row => GetCell(row, 0).Trim().Equals(petConfigId, StringComparison.OrdinalIgnoreCase))
+                .Select(row => CleanGlobalMarkup(GetCell(row, 2)))
+                .FirstOrDefault(value => value.Length is >= 6 and <= 360 && ContainsChinese(value)) ??
+              string.Empty;
+
+        string description = !string.IsNullOrWhiteSpace(promptDescription)
+            ? promptDescription
+            : rows
+            .Select(row => ExtractGlobalBestDescription(entityName, new[] { row }))
+            .Select(CleanGlobalMarkup)
+            .FirstOrDefault(value =>
+                value.Length is >= 6 and <= 240 &&
+                !value.Contains('\t') &&
+                !Regex.IsMatch(value, @"(?:\d+\s+){8,}")) ??
+            string.Empty;
+        Add("说明", description);
+
+        return result;
     }
 
     private void AddGlobalAssetReferencesFromText(
@@ -1278,6 +1592,7 @@ public sealed partial class MainWindow : Window
 
     private static int GetGlobalKnowledgeLinkRank(GlobalSearchLinkViewModel link)
     {
+        if (link.Kind.Equals("主图标", StringComparison.Ordinal)) return -2;
         if (link.Kind.Contains("图标", StringComparison.Ordinal) || link.Kind.Contains("头像", StringComparison.Ordinal)) return 0;
         if (link.Kind.Contains("模型", StringComparison.Ordinal) || link.Kind.Contains("外观", StringComparison.Ordinal)) return 1;
         if (link.Kind.Contains("贴图", StringComparison.Ordinal) || link.Kind.Contains("图像", StringComparison.Ordinal)) return 2;
@@ -1327,7 +1642,8 @@ public sealed partial class MainWindow : Window
 
         foreach (string[] row in LoadMbRows("pet/car_skill.txt"))
         {
-            if (!RowContainsGlobalEntity(row, entityName)) continue;
+            string owner = NormalizeGlobalEntityTitle(GetCell(row, 4));
+            if (!owner.Equals(NormalizeGlobalEntityTitle(entityName), StringComparison.OrdinalIgnoreCase)) continue;
             string line = FormatGlobalSkillLine(row, entityName);
             if (!string.IsNullOrWhiteSpace(line))
                 yield return line;
@@ -1642,7 +1958,7 @@ public sealed partial class MainWindow : Window
     {
         if (normalizedPath.StartsWith("pet/pet_type_prompt", StringComparison.Ordinal))
         {
-            yield return ExtractGlobalNameCandidate(GetCell(row, 2));
+            yield return CleanGlobalTitle(GetCell(row, 0));
             yield break;
         }
 
@@ -2463,7 +2779,11 @@ public sealed partial class MainWindow : Window
         {
             if (generation != _globalSearchGeneration) return;
 
-            AssetEntry? resultImage = result.Asset?.Kind == AssetKind.Image ? result.Asset : null;
+            AssetEntry? resultImage = result.Links
+                .Where(link => link.Kind.Equals("主图标", StringComparison.Ordinal))
+                .Select(link => link.Asset)
+                .FirstOrDefault(asset => asset?.Kind == AssetKind.Image) ??
+                (result.Asset?.Kind == AssetKind.Image ? result.Asset : null);
             foreach (GlobalSearchLinkViewModel link in result.Links.Take(36))
             {
                 AssetEntry? linkImage = ResolveGlobalSearchLinkThumbnailAsset(link);
@@ -2480,6 +2800,13 @@ public sealed partial class MainWindow : Window
                     if (Equals(GlobalSearchResultList.SelectedItem, result))
                         GlobalSearchPreviewImage.Source = result.Thumbnail;
                 }
+            }
+
+            foreach (GlobalSearchSkillViewModel skill in result.Skills)
+            {
+                if (generation != _globalSearchGeneration) return;
+                if (skill.IconAsset is null) continue;
+                skill.Icon = await LoadGlobalThumbnailAsync(skill.IconAsset, generation);
             }
 
             if (result.Thumbnail is null && resultImage is not null)
@@ -2538,13 +2865,22 @@ public sealed partial class MainWindow : Window
 
     private void ShowGlobalSearchResult(GlobalSearchResultViewModel? result)
     {
+        GlobalSearchDetailScrollViewer.ChangeView(null, 0, null, disableAnimation: true);
+
         if (result is null)
         {
+            _globalDetailPreviewGeneration++;
+            _globalModelPreview.SetMesh(null);
+            GlobalSearchModelPanel.Visibility = Visibility.Collapsed;
+            GlobalSearchModelStatusText.Text = string.Empty;
+            GlobalSearchFactsPanel.Visibility = Visibility.Collapsed;
+            GlobalSearchFactsList.ItemsSource = null;
+            GlobalSearchSkillsPanel.Visibility = Visibility.Collapsed;
+            GlobalSearchSkillsList.ItemsSource = null;
             GlobalSearchPreviewImage.Source = null;
             GlobalSearchDetailTitleText.Text = "选择一条结果";
             GlobalSearchDetailMetaText.Text = string.Empty;
             GlobalSearchDetailSourceText.Text = string.Empty;
-            GlobalSearchDetailPreviewText.Text = string.Empty;
             GlobalSearchResourceSectionList.ItemsSource = null;
             GlobalSearchNoLinksText.Visibility = Visibility.Visible;
             GlobalSearchRawTextBox.Text = string.Empty;
@@ -2554,13 +2890,17 @@ public sealed partial class MainWindow : Window
         GlobalSearchPreviewImage.Source = result.Thumbnail;
         GlobalSearchDetailTitleText.Text = result.Title;
         GlobalSearchDetailMetaText.Text = $"{result.Category} · {result.Subtitle}";
-        GlobalSearchDetailSourceText.Text = result.Links.Count > 0
-            ? "点击下方卡片可跳转到图标、模型、来源文件，或继续按物品 ID 追踪。"
-            : result.SourcePath;
-        GlobalSearchDetailPreviewText.Text = result.PreviewText;
+        GlobalSearchDetailSourceText.Text =
+            $"已关联 {result.Links.Count:N0} 项资源" +
+            (result.Skills.Count > 0 ? $" · {result.Skills.Count:N0} 个技能" : string.Empty);
+        GlobalSearchFactsList.ItemsSource = result.Facts;
+        GlobalSearchFactsPanel.Visibility = result.Facts.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        GlobalSearchSkillsList.ItemsSource = result.Skills;
+        GlobalSearchSkillsPanel.Visibility = result.Skills.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         GlobalSearchResourceSectionList.ItemsSource = result.ResourceSections;
         GlobalSearchNoLinksText.Visibility = result.Links.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         GlobalSearchRawTextBox.Text = result.RawText;
+        _ = PreviewGlobalSearchModelAsync(result, ++_globalDetailPreviewGeneration);
     }
 
     private void GlobalSearchLink_Click(object sender, RoutedEventArgs e)
@@ -2939,44 +3279,109 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async Task PreviewGlobalSearchModelAsync(
+        GlobalSearchResultViewModel result,
+        int previewGeneration)
+    {
+        AssetEntry? config = result.Links
+            .Select(link => link.Asset)
+            .FirstOrDefault(asset => asset?.Extension.Equals(".cct", StringComparison.OrdinalIgnoreCase) == true);
+        CompositeModelEntry? composite = config is null ? null : FindGlobalCompositeModel(config);
+        if (composite is null)
+        {
+            if (previewGeneration != _globalDetailPreviewGeneration) return;
+            _globalModelPreview.SetMesh(null);
+            GlobalSearchModelPanel.Visibility = Visibility.Collapsed;
+            GlobalSearchModelStatusText.Text = string.Empty;
+            return;
+        }
+
+        GlobalSearchModelPanel.Visibility = Visibility.Visible;
+        GlobalSearchModelStatusText.Text = "正在加载";
+        try
+        {
+            (ModelRenderPart[] renderParts, int skippedParts, ModelAnimationSet? animationSet) =
+                await LoadCompositeRenderPartsAsync(composite);
+            if (previewGeneration != _globalDetailPreviewGeneration ||
+                !ReferenceEquals(GlobalSearchResultList.SelectedItem, result))
+            {
+                return;
+            }
+
+            if (renderParts.Length == 0)
+            {
+                _globalModelPreview.SetMesh(null);
+                GlobalSearchModelStatusText.Text = "没有可用部件";
+                return;
+            }
+
+            _globalModelPreview.SetComposite(renderParts, composite.Name);
+            _globalModelPreview.SetAnimationSet(animationSet);
+            string skipped = skippedParts > 0 ? $"，跳过 {skippedParts:N0} 个异常部件" : string.Empty;
+            string actions = animationSet is null ? string.Empty : $"，{animationSet.Animations.Count:N0} 个动作";
+            GlobalSearchModelStatusText.Text = $"{renderParts.Length:N0} 个部件{actions}{skipped}";
+        }
+        catch
+        {
+            if (previewGeneration != _globalDetailPreviewGeneration) return;
+            _globalModelPreview.SetMesh(null);
+            GlobalSearchModelStatusText.Text = "模型加载失败";
+        }
+    }
+
+    private Task<(ModelRenderPart[] RenderParts, int SkippedParts, ModelAnimationSet? AnimationSet)> LoadCompositeRenderPartsAsync(
+        CompositeModelEntry composite) =>
+        Task.Run(() =>
+        {
+            var parts = new List<ModelRenderPart>();
+            int skipped = 0;
+            foreach (CompositeModelPart part in composite.Parts)
+            {
+                try
+                {
+                    PmfMesh mesh = PmfParser.Parse(_workspace.Extract(part.MeshAsset));
+                    DecodedTexture? texture = null;
+                    string textureName = string.Empty;
+                    if (part.TextureBinding is ModelTextureBinding binding)
+                    {
+                        try
+                        {
+                            texture = DdsDecoder.Decode(_workspace.Extract(binding.TextureAsset));
+                            textureName = binding.DisplayName;
+                        }
+                        catch
+                        {
+                            // Keep the geometry visible when a single texture cannot be decoded.
+                        }
+                    }
+
+                    parts.Add(new ModelRenderPart(part.MeshAsset.Name, mesh, texture, textureName));
+                }
+                catch
+                {
+                    skipped++;
+                }
+            }
+
+            ModelAnimationSet? animationSet = null;
+            try
+            {
+                animationSet = _workspace.LoadModelAnimationSet(composite);
+            }
+            catch
+            {
+                // Keep the model preview available when optional animation data is malformed.
+            }
+
+            return (parts.ToArray(), skipped, animationSet);
+        });
+
     private async Task PreviewCompositeModelAsync(CompositeModelEntry composite, int previewGeneration)
     {
         try
         {
-            (ModelRenderPart[] renderParts, int skippedParts) = await Task.Run(() =>
-            {
-                var parts = new List<ModelRenderPart>();
-                int skipped = 0;
-                foreach (CompositeModelPart part in composite.Parts)
-                {
-                    try
-                    {
-                        PmfMesh mesh = PmfParser.Parse(_workspace.Extract(part.MeshAsset));
-                        DecodedTexture? texture = null;
-                        string textureName = string.Empty;
-                        if (part.TextureBinding is ModelTextureBinding binding)
-                        {
-                            try
-                            {
-                                texture = DdsDecoder.Decode(_workspace.Extract(binding.TextureAsset));
-                                textureName = binding.DisplayName;
-                            }
-                            catch
-                            {
-                                // 单个部件贴图不支持时，仍保留其实体着色几何。
-                            }
-                        }
-
-                        parts.Add(new ModelRenderPart(part.MeshAsset.Name, mesh, texture, textureName));
-                    }
-                    catch
-                    {
-                        skipped++;
-                    }
-                }
-
-                return (parts.ToArray(), skipped);
-            });
+            (ModelRenderPart[] renderParts, int skippedParts, ModelAnimationSet? animationSet) =
+                await LoadCompositeRenderPartsAsync(composite);
             if (_selectedComposite != composite || !IsPreviewCurrent(previewGeneration)) return;
             if (renderParts.Length == 0)
             {
@@ -2985,11 +3390,15 @@ public sealed partial class MainWindow : Window
             }
 
             _modelPreview.SetComposite(renderParts, composite.Name);
+            _modelPreview.SetAnimationSet(animationSet);
             int vertices = renderParts.Sum(part => part.Mesh.Vertices.Count);
             long triangles = renderParts.Sum(part => (long)part.Mesh.DeclaredTriangleCount);
             int texturedParts = renderParts.Count(part => part.Texture is not null);
             string skippedStatus = skippedParts > 0 ? $" · 跳过 {skippedParts:N0} 个异常部件" : string.Empty;
-            SelectedMetadataText.Text = $"完整组合 · {renderParts.Length:N0} 个 PMF 部件 · {vertices:N0} 顶点 · {triangles:N0} 三角面 · {texturedParts:N0} 个部件已加载贴图{skippedStatus}";
+            string animationStatus = animationSet is null
+                ? string.Empty
+                : $" · {animationSet.Animations.Count:N0} 个骨骼动作";
+            SelectedMetadataText.Text = $"完整组合 · {renderParts.Length:N0} 个 PMF 部件 · {vertices:N0} 顶点 · {triangles:N0} 三角面 · {texturedParts:N0} 个部件已加载贴图{animationStatus}{skippedStatus}";
         }
         catch (Exception ex)
         {
@@ -3095,6 +3504,19 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(18, 9, 18, 9)
         };
+        var autoUpdateToggle = new ToggleSwitch
+        {
+            Header = "自动检查更新",
+            OffContent = "已关闭",
+            OnContent = "已开启",
+            IsOn = UserPreferences.LoadAutoCheckForUpdates()
+        };
+        var checkUpdateButton = new Button
+        {
+            Content = "检查更新",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(18, 9, 18, 9)
+        };
         var panel = new StackPanel { Spacing = 14, Width = 620 };
         panel.Children.Add(pathBox);
         panel.Children.Add(new TextBlock
@@ -3104,6 +3526,26 @@ public sealed partial class MainWindow : Window
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
         });
         panel.Children.Add(chooseButton);
+        panel.Children.Add(new Border
+        {
+            Height = 1,
+            Margin = new Thickness(0, 4, 0, 2),
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"]
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "软件更新",
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        panel.Children.Add(autoUpdateToggle);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "更新会在软件内下载并校验，完成后自动重启安装。",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        panel.Children.Add(checkUpdateButton);
 
         var dialog = new ContentDialog
         {
@@ -3117,6 +3559,13 @@ public sealed partial class MainWindow : Window
         {
             dialog.Hide();
             await PickAndLoadResourceFolderAsync();
+        };
+        autoUpdateToggle.Toggled += (_, _) =>
+            UserPreferences.SaveAutoCheckForUpdates(autoUpdateToggle.IsOn);
+        checkUpdateButton.Click += async (_, _) =>
+        {
+            dialog.Hide();
+            await CheckForUpdatesAsync(silent: false);
         };
         await dialog.ShowAsync();
     }
@@ -3145,6 +3594,13 @@ public sealed partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
         });
+        var checkUpdateButton = new Button
+        {
+            Content = "检查更新",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(18, 9, 18, 9)
+        };
+        panel.Children.Add(checkUpdateButton);
 
         var dialog = new ContentDialog
         {
@@ -3153,7 +3609,178 @@ public sealed partial class MainWindow : Window
             Content = panel,
             CloseButtonText = "关闭"
         };
+        checkUpdateButton.Click += async (_, _) =>
+        {
+            dialog.Hide();
+            await CheckForUpdatesAsync(silent: false);
+        };
         await dialog.ShowAsync();
+    }
+
+    private async Task CheckForUpdatesAsync(bool silent)
+    {
+        if (_checkingForUpdates) return;
+        _checkingForUpdates = true;
+        if (!silent) SetStatus("正在检查更新…");
+
+        try
+        {
+            UpdateCheckResult result = await _updateService.CheckAsync(
+                AppVersion,
+                force: !silent);
+            if (!result.Checked) return;
+
+            if (result.IsUpdateAvailable && result.Manifest is not null)
+            {
+                await ShowUpdateDialogAsync(result.Manifest, result.ManifestUrl);
+            }
+            else if (!silent)
+            {
+                await ShowErrorAsync("检查更新", result.Message ?? "当前已是最新版本。");
+            }
+        }
+        catch (Exception exception)
+        {
+            if (!silent)
+                await ShowErrorAsync("检查更新失败", exception.Message);
+        }
+        finally
+        {
+            _checkingForUpdates = false;
+            if (!silent) SetStatus("就绪");
+        }
+    }
+
+    private async Task ShowUpdateDialogAsync(
+        UpdateChannelManifest manifest,
+        string? manifestUrl)
+    {
+        var notes = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(manifest.ReleaseNotes)
+                ? "此版本未提供更新说明。"
+                : manifest.ReleaseNotes.Trim(),
+            TextWrapping = TextWrapping.Wrap
+        };
+        var notesScroller = new ScrollViewer
+        {
+            Content = notes,
+            MaxHeight = 220,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        var progressBar = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Visibility = Visibility.Collapsed
+        };
+        var progressText = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+        };
+        var panel = new StackPanel { Spacing = 12, Width = 560 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"v{AppVersion}  →  v{manifest.Version}",
+            FontSize = 18,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        panel.Children.Add(notesScroller);
+        if (Uri.TryCreate(manifestUrl, UriKind.Absolute, out Uri? sourceUri))
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"版本信息来源：{sourceUri.Host}",
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+            });
+        }
+        panel.Children.Add(progressBar);
+        panel.Children.Add(progressText);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = "发现新版本",
+            Content = panel,
+            PrimaryButtonText = "立即更新",
+            CloseButtonText = "稍后",
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        bool installing = false;
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            if (installing)
+            {
+                args.Cancel = true;
+                return;
+            }
+
+            args.Cancel = true;
+            ContentDialogButtonClickDeferral deferral = args.GetDeferral();
+            installing = true;
+            dialog.IsPrimaryButtonEnabled = false;
+            dialog.CloseButtonText = null;
+            progressBar.Visibility = Visibility.Visible;
+            progressBar.IsIndeterminate = true;
+            progressText.Text = "正在连接更新源…";
+
+            try
+            {
+                var progress = new Progress<UpdateDownloadProgress>(value =>
+                {
+                    if (value.Percentage is double percentage)
+                    {
+                        progressBar.IsIndeterminate = false;
+                        progressBar.Value = percentage;
+                    }
+                    progressText.Text = value.TotalBytes is long total
+                        ? $"正在下载 {FormatByteSize(value.BytesReceived)} / {FormatByteSize(total)}"
+                        : $"正在下载 {FormatByteSize(value.BytesReceived)}";
+                });
+
+                UpdateDownloadResult download = await _updateService.DownloadAsync(
+                    manifest,
+                    progress);
+                progressBar.IsIndeterminate = true;
+                progressText.Text = "下载完成，正在启动安装程序…";
+
+                string target = UpdateInstaller.ResolveUpdateTargetPath(
+                    Environment.GetCommandLineArgs());
+                UpdateInstaller.StartApplyUpdate(download.FilePath, target);
+                dialog.Hide();
+                Application.Current.Exit();
+            }
+            catch (Exception exception)
+            {
+                installing = false;
+                dialog.IsPrimaryButtonEnabled = true;
+                dialog.CloseButtonText = "关闭";
+                progressBar.IsIndeterminate = false;
+                progressBar.Value = 0;
+                progressText.Text = $"更新失败：{exception.Message}";
+            }
+            finally
+            {
+                deferral.Complete();
+            }
+        };
+
+        await dialog.ShowAsync();
+    }
+
+    private static string FormatByteSize(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB"];
+        double value = Math.Max(0, bytes);
+        int unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+        return $"{value:0.##} {units[unitIndex]}";
     }
 
     private async void ExportSelectedButton_Click(object sender, RoutedEventArgs e)
@@ -3249,6 +3876,51 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             await ShowErrorAsync("读取属性失败", ex.Message);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private async void ModelPreview_AnimationExportRequested(
+        object? sender,
+        AnimationExportRequestedEventArgs e)
+    {
+        if (_isBusy)
+        {
+            return;
+        }
+
+        string sourceName = _selectedComposite?.Name
+            ?? System.IO.Path.GetFileNameWithoutExtension(e.Animation.SourceAsset.Name);
+        var picker = new FileSavePicker
+        {
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+            SuggestedFileName = SanitizeFileName($"{sourceName}_{e.Animation.Name}")
+        };
+        picker.FileTypeChoices.Add("Biovision BVH 骨骼动画", new List<string> { ".bvh" });
+        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+
+        StorageFile? file = await picker.PickSaveFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        SetBusy(true, $"正在导出骨骼动画：{e.Animation.Name}…");
+        try
+        {
+            await Task.Run(() =>
+                BvhExporter.Export(
+                    file.Path,
+                    e.AnimationSet.Skeleton,
+                    e.Animation));
+            SetStatus($"BVH 骨骼动画已导出：{file.Path}");
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorAsync("BVH 导出失败", ex.Message);
         }
         finally
         {

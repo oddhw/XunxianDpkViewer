@@ -228,6 +228,8 @@ public sealed class GlobalSearchResultViewModel : INotifyPropertyChanged
     public int SortRank { get; init; }
     public AssetEntry? Asset { get; init; }
     public IReadOnlyList<GlobalSearchLinkViewModel> Links { get; init; } = Array.Empty<GlobalSearchLinkViewModel>();
+    public IReadOnlyList<GlobalSearchFactViewModel> Facts { get; init; } = Array.Empty<GlobalSearchFactViewModel>();
+    public IReadOnlyList<GlobalSearchSkillViewModel> Skills { get; init; } = Array.Empty<GlobalSearchSkillViewModel>();
     public IReadOnlyList<GlobalSearchResourceSectionViewModel> ResourceSections =>
         GlobalSearchResourceSectionViewModel.Build(Links);
 
@@ -239,6 +241,46 @@ public sealed class GlobalSearchResultViewModel : INotifyPropertyChanged
             if (Equals(_thumbnail, value)) return;
             _thumbnail = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+public sealed record GlobalSearchFactViewModel(string Label, string Value);
+
+public sealed class GlobalSearchSkillViewModel : INotifyPropertyChanged
+{
+    private ImageSource? _icon;
+
+    public GlobalSearchSkillViewModel(
+        string name,
+        string id,
+        string unlockText,
+        string description,
+        AssetEntry? iconAsset)
+    {
+        Name = name;
+        Id = id;
+        UnlockText = unlockText;
+        Description = description;
+        IconAsset = iconAsset;
+    }
+
+    public string Name { get; }
+    public string Id { get; }
+    public string UnlockText { get; }
+    public string Description { get; }
+    public AssetEntry? IconAsset { get; }
+
+    public ImageSource? Icon
+    {
+        get => _icon;
+        set
+        {
+            if (Equals(_icon, value)) return;
+            _icon = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Icon)));
         }
     }
 
@@ -352,6 +394,18 @@ public sealed class GlobalSearchLinkViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 }
 
+public readonly record struct PmfBoneIndices(ushort X, ushort Y, ushort Z, ushort W)
+{
+    public ushort this[int index] => index switch
+    {
+        0 => X,
+        1 => Y,
+        2 => Z,
+        3 => W,
+        _ => throw new ArgumentOutOfRangeException(nameof(index))
+    };
+}
+
 public sealed record PmfMesh(
     IReadOnlyList<System.Numerics.Vector3> Vertices,
     IReadOnlyList<System.Numerics.Vector2> TextureCoordinates,
@@ -359,7 +413,62 @@ public sealed record PmfMesh(
     uint Version,
     uint VertexFlags,
     uint UvChannelCount,
-    uint DeclaredTriangleCount);
+    uint DeclaredTriangleCount)
+{
+    public IReadOnlyList<System.Numerics.Vector4> BoneWeights { get; init; } =
+        Array.Empty<System.Numerics.Vector4>();
+
+    public IReadOnlyList<PmfBoneIndices> BoneIndices { get; init; } =
+        Array.Empty<PmfBoneIndices>();
+
+    public bool HasSkinning =>
+        BoneWeights.Count == Vertices.Count &&
+        BoneIndices.Count == Vertices.Count;
+}
+
+public sealed record ModelAnimationReference(
+    string Name,
+    AssetEntry Asset,
+    int Priority);
+
+public sealed record SkeletonBone(
+    int Index,
+    string Name,
+    int ParentIndex,
+    System.Numerics.Vector3 BindTranslation,
+    System.Numerics.Quaternion BindRotation,
+    System.Numerics.Vector3 InverseBindTranslation,
+    System.Numerics.Quaternion InverseBindRotation,
+    IReadOnlyList<int> Children);
+
+public sealed record SkeletonData(
+    int CoreBoneCount,
+    IReadOnlyList<SkeletonBone> Bones);
+
+public sealed record AnimationTrack(
+    int BoneIndex,
+    IReadOnlyList<System.Numerics.Quaternion> RotationKeys,
+    IReadOnlyList<System.Numerics.Vector3> TranslationKeys);
+
+public sealed record SkeletalAnimation(
+    string Name,
+    int SampleRate,
+    float Duration,
+    IReadOnlyDictionary<int, AnimationTrack> Tracks,
+    AssetEntry SourceAsset)
+{
+    public int FrameCount => Math.Max(
+        1,
+        Tracks.Count == 0
+            ? (int)MathF.Round(Duration * SampleRate) + 1
+            : Tracks.Values.Max(track => Math.Max(track.RotationKeys.Count, track.TranslationKeys.Count)));
+
+    public override string ToString() => Name;
+}
+
+public sealed record ModelAnimationSet(
+    SkeletonData Skeleton,
+    IReadOnlyList<SkeletalAnimation> Animations);
 
 public sealed record DecodedTexture(
     int Width,
@@ -391,6 +500,11 @@ public sealed record CompositeModelEntry(
     IReadOnlyList<CompositeModelPart> Parts)
 {
     public string DisplayPath => $"{ConfigAsset.ArchiveName}  /  {ConfigAsset.Entry.Path}";
+
+    public AssetEntry? SkeletonAsset { get; init; }
+
+    public IReadOnlyList<ModelAnimationReference> Animations { get; init; } =
+        Array.Empty<ModelAnimationReference>();
 }
 
 public sealed record ModelRenderPart(

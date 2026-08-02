@@ -24,6 +24,27 @@ public partial class App : Application
         try
         {
             string[] commandLineArgs = Environment.GetCommandLineArgs();
+            if (UpdateInstaller.IsApplyMode(commandLineArgs))
+            {
+                UpdateInstaller.ApplyUpdateAndRestart(commandLineArgs);
+                Exit();
+                return;
+            }
+            string? verifyManifestArgument = commandLineArgs.FirstOrDefault(argument =>
+                argument.StartsWith("--verify-update-manifest=", StringComparison.OrdinalIgnoreCase));
+            if (verifyManifestArgument is not null)
+            {
+                string manifestPath = verifyManifestArgument[(verifyManifestArgument.IndexOf('=') + 1)..].Trim('"');
+                string folder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "XunxianDpkViewer");
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(
+                    Path.Combine(folder, "update-manifest-test.log"),
+                    UpdateService.ValidateManifestFile(manifestPath) ? "VALID" : "INVALID");
+                Exit();
+                return;
+            }
             if (commandLineArgs.Any(argument => argument.Equals("--self-test", StringComparison.OrdinalIgnoreCase)))
             {
                 string folder = Path.Combine(
@@ -40,6 +61,7 @@ public partial class App : Application
                 return;
             }
 
+            UpdateInstaller.ScheduleCleanup(commandLineArgs);
             _window = new MainWindow();
             _window.Activate();
         }
@@ -80,6 +102,8 @@ public partial class App : Application
         };
         foreach (string argument in commandLineArgs.Skip(1))
             startInfo.ArgumentList.Add(argument);
+        if (!UpdateInstaller.HasLauncherSourceArgument(commandLineArgs))
+            startInfo.ArgumentList.Add(UpdateInstaller.BuildLauncherSourceArgument(processPath));
         Process.Start(startInfo);
         return true;
     }

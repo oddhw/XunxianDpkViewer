@@ -29,6 +29,8 @@ public sealed class DpkWorkspace : IDisposable
 
     private readonly Dictionary<string, DpkReader> _readers = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<AssetEntry> _assets = new();
+    private readonly Dictionary<string, ModelAnimationSet> _animationCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _animationGate = new();
     private ModelTextureResolver? _modelTextureResolver;
 
     public IReadOnlyList<AssetEntry> Assets => _assets;
@@ -39,6 +41,7 @@ public sealed class DpkWorkspace : IDisposable
         foreach (DpkReader reader in _readers.Values) reader.Dispose();
         _readers.Clear();
         _assets.Clear();
+        lock (_animationGate) _animationCache.Clear();
         _modelTextureResolver = null;
     }
 
@@ -80,6 +83,37 @@ public sealed class DpkWorkspace : IDisposable
 
     public IReadOnlyList<CompositeModelEntry> FindCompositeModels(string archivePath, string folderPath) =>
         (_modelTextureResolver ??= new ModelTextureResolver(this)).FindComposites(archivePath, folderPath);
+
+    public ModelAnimationSet? LoadModelAnimationSet(CompositeModelEntry composite)
+    {
+        if (composite.SkeletonAsset is null || composite.Animations.Count == 0)
+            return null;
+
+        lock (_animationGate)
+        {
+            if (_animationCache.TryGetValue(composite.ConfigAsset.DisplayPath, out ModelAnimationSet? cached))
+                return cached;
+
+            SkeletonData skeleton = PsfParser.Parse(Extract(composite.SkeletonAsset));
+            var animations = new List<SkeletalAnimation>();
+            foreach (ModelAnimationReference reference in composite.Animations)
+            {
+                try
+                {
+                    animations.Add(PafParser.Parse(Extract(reference.Asset), reference.Name, reference.Asset));
+                }
+                catch
+                {
+                    // A broken optional action should not prevent the other actions from playing.
+                }
+            }
+
+            if (animations.Count == 0) return null;
+            var result = new ModelAnimationSet(skeleton, animations);
+            _animationCache[composite.ConfigAsset.DisplayPath] = result;
+            return result;
+        }
+    }
 
     public void ExtractTo(AssetEntry asset, string rootFolder)
     {

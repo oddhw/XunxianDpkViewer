@@ -40,6 +40,37 @@ public static class PmfParser
                 ReadSingle(data, offset + 8));
         }
 
+        var boneWeights = Array.Empty<Vector4>();
+        var boneIndices = Array.Empty<PmfBoneIndices>();
+        int vertexStride = checked((int)(vertexDataBytes / vertexCount));
+        bool hasSkinning = (vertexFlags & 0x10) != 0 && vertexStride >= 32;
+        if (hasSkinning)
+        {
+            int weightOffset = checked(positionOffset + (int)positionBytes);
+            int boneIndexOffset = checked(weightOffset + (int)vertexCount * 12);
+            boneWeights = new Vector4[vertexCount];
+            boneIndices = new PmfBoneIndices[vertexCount];
+            for (int i = 0; i < boneWeights.Length; i++)
+            {
+                int offset = weightOffset + i * 12;
+                float x = Math.Max(0f, ReadSingle(data, offset));
+                float y = Math.Max(0f, ReadSingle(data, offset + 4));
+                float z = Math.Max(0f, ReadSingle(data, offset + 8));
+                float w = Math.Max(0f, 1f - x - y - z);
+                float total = x + y + z + w;
+                boneWeights[i] = total > 0.000001f
+                    ? new Vector4(x, y, z, w) / total
+                    : Vector4.Zero;
+
+                offset = boneIndexOffset + i * 8;
+                boneIndices[i] = new PmfBoneIndices(
+                    BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset, 2)),
+                    BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset + 2, 2)),
+                    BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset + 4, 2)),
+                    BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset + 6, 2)));
+            }
+        }
+
         var textureCoordinates = Array.Empty<Vector2>();
         if (uvChannels > 0)
         {
@@ -62,7 +93,11 @@ public static class PmfParser
         if (indices.Any(index => index >= vertexCount))
             throw new InvalidDataException("PMF 索引超出顶点范围。");
 
-        return new PmfMesh(vertices, textureCoordinates, indices, version, vertexFlags, uvChannels, triangleCount);
+        return new PmfMesh(vertices, textureCoordinates, indices, version, vertexFlags, uvChannels, triangleCount)
+        {
+            BoneWeights = boneWeights,
+            BoneIndices = boneIndices
+        };
     }
 
     private static uint ReadUInt(ReadOnlySpan<byte> data, int offset) =>

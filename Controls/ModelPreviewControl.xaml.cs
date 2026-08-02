@@ -3,8 +3,10 @@ using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
+using XunxianDpkViewer.Core;
 using XunxianDpkViewer.Models;
 
 namespace XunxianDpkViewer.Controls;
@@ -30,6 +32,18 @@ internal enum TextureColorKeyMode
     Chroma
 }
 
+public sealed class AnimationExportRequestedEventArgs : EventArgs
+{
+    public AnimationExportRequestedEventArgs(ModelAnimationSet animationSet, SkeletalAnimation animation)
+    {
+        AnimationSet = animationSet;
+        Animation = animation;
+    }
+
+    public ModelAnimationSet AnimationSet { get; }
+    public SkeletalAnimation Animation { get; }
+}
+
 public sealed partial class ModelPreviewControl : UserControl
 {
     private const int MaximumRasterDimension = 1400;
@@ -49,14 +63,29 @@ public sealed partial class ModelPreviewControl : UserControl
     private Windows.Foundation.Point _lastPointer;
     private uint? _capturedPointerId;
     private bool _renderQueued;
+    private readonly DispatcherTimer _animationTimer;
+    private ModelAnimationSet? _animationSet;
+    private SkeletalAnimation? _currentAnimation;
+    private DateTimeOffset _lastAnimationTick;
+    private float _animationTime;
+    private bool _isAnimationPlaying;
+    private bool _isUpdatingTimeline;
 
     public ModelPreviewControl()
     {
         InitializeComponent();
+        _animationTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(33)
+        };
+        _animationTimer.Tick += AnimationTimer_Tick;
     }
+
+    public event EventHandler<AnimationExportRequestedEventArgs>? AnimationExportRequested;
 
     public void SetMesh(PmfMesh? mesh)
     {
+        SetAnimationSet(null);
         _parts = mesh is null
             ? Array.Empty<ModelRenderPart>()
             : new[] { new ModelRenderPart(string.Empty, mesh, null, string.Empty) };
@@ -71,6 +100,7 @@ public sealed partial class ModelPreviewControl : UserControl
 
     public void SetComposite(IReadOnlyList<ModelRenderPart> parts, string modelName)
     {
+        SetAnimationSet(null);
         _parts = parts;
         _modelName = modelName;
         ResetCamera();
@@ -79,6 +109,27 @@ public sealed partial class ModelPreviewControl : UserControl
         EmptyText.Visibility = parts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateHint();
         ScheduleRender();
+    }
+
+    public void SetAnimationSet(ModelAnimationSet? animationSet)
+    {
+        SetAnimationPlaying(false);
+        _animationSet = animationSet;
+        _currentAnimation = null;
+        _animationTime = 0;
+        AnimationSelector.ItemsSource = null;
+
+        if (animationSet is null || animationSet.Animations.Count == 0)
+        {
+            AnimationPanel.Visibility = Visibility.Collapsed;
+            UpdateAnimationControls();
+            ScheduleRender();
+            return;
+        }
+
+        AnimationSelector.ItemsSource = animationSet.Animations;
+        AnimationPanel.Visibility = Visibility.Visible;
+        AnimationSelector.SelectedIndex = 0;
     }
 
     public void SetTexture(DecodedTexture? texture, string? textureName, bool selectTexturedMode = true)
@@ -152,7 +203,8 @@ public sealed partial class ModelPreviewControl : UserControl
             return;
         }
 
-        double rasterScale = Math.Min(1d, MaximumRasterDimension / Math.Max(Surface.ActualWidth, Surface.ActualHeight));
+        int rasterLimit = _isAnimationPlaying ? 900 : MaximumRasterDimension;
+        double rasterScale = Math.Min(1d, rasterLimit / Math.Max(Surface.ActualWidth, Surface.ActualHeight));
         int width = Math.Max(1, (int)Math.Round(Surface.ActualWidth * rasterScale));
         int height = Math.Max(1, (int)Math.Round(Surface.ActualHeight * rasterScale));
         byte[] pixels;
@@ -207,12 +259,23 @@ public sealed partial class ModelPreviewControl : UserControl
             }
         }
 
-        ModelRenderPart? firstPart = parts.FirstOrDefault(part => part.Mesh.Vertices.Count > 0);
-        if (firstPart is null) return pixels;
+        Matrix4x4[]? skinMatrices = _animationSet is not null && _currentAnimation is not null
+            ? AnimationPoseSampler.BuildSkinMatrices(
+                _animationSet.Skeleton,
+                _currentAnimation,
+                _animationTime)
+            : null;
+        var renderedParts = parts
+            .Select(part => (
+                Part: part,
+                Vertices: GetAnimatedVertices(part.Mesh, skinMatrices)))
+            .ToArray();
+        var firstPart = renderedParts.FirstOrDefault(part => part.Vertices.Count > 0);
+        if (firstPart.Part is null) return pixels;
 
-        Vector3 min = firstPart.Mesh.Vertices[0];
+        Vector3 min = firstPart.Vertices[0];
         Vector3 max = min;
-        foreach (Vector3 vertex in parts.SelectMany(part => part.Mesh.Vertices))
+        foreach (Vector3 vertex in renderedParts.SelectMany(part => part.Vertices))
         {
             min = Vector3.Min(min, vertex);
             max = Vector3.Max(max, vertex);
@@ -229,10 +292,11 @@ public sealed partial class ModelPreviewControl : UserControl
             : Enumerable.Repeat(float.NegativeInfinity, width * height).ToArray();
         Vector3 light = Vector3.Normalize(new Vector3(-0.35f, 0.65f, 0.9f));
         int renderedTriangles = 0;
-        foreach (ModelRenderPart part in parts)
+        foreach (var renderedPart in renderedParts)
         {
+            ModelRenderPart part = renderedPart.Part;
             PmfMesh mesh = part.Mesh;
-            IReadOnlyList<Vector3> source = mesh.Vertices;
+            IReadOnlyList<Vector3> source = renderedPart.Vertices;
             var transformed = new Vector3[source.Count];
             var projected = new Vector2[source.Count];
             for (int i = 0; i < source.Count; i++)
@@ -296,6 +360,56 @@ public sealed partial class ModelPreviewControl : UserControl
             }
         }
         return pixels;
+    }
+
+    private static IReadOnlyList<Vector3> GetAnimatedVertices(PmfMesh mesh, Matrix4x4[]? skinMatrices)
+    {
+        if (skinMatrices is null || !mesh.HasSkinning)
+            return mesh.Vertices;
+
+        var result = new Vector3[mesh.Vertices.Count];
+        for (int vertexIndex = 0; vertexIndex < result.Length; vertexIndex++)
+        {
+            Vector3 source = mesh.Vertices[vertexIndex];
+            Vector4 weights = mesh.BoneWeights[vertexIndex];
+            PmfBoneIndices indices = mesh.BoneIndices[vertexIndex];
+            Vector3 animated = Vector3.Zero;
+            float totalWeight = 0f;
+
+            for (int influence = 0; influence < 4; influence++)
+            {
+                float weight = influence switch
+                {
+                    0 => weights.X,
+                    1 => weights.Y,
+                    2 => weights.Z,
+                    _ => weights.W
+                };
+                int boneIndex = indices[influence];
+                if (weight <= 0.000001f || (uint)boneIndex >= skinMatrices.Length)
+                    continue;
+
+                animated += Vector3.Transform(source, skinMatrices[boneIndex]) * weight;
+                totalWeight += weight;
+            }
+
+            if (totalWeight > 0.000001f)
+            {
+                animated /= totalWeight;
+                result[vertexIndex] =
+                    float.IsFinite(animated.X) &&
+                    float.IsFinite(animated.Y) &&
+                    float.IsFinite(animated.Z)
+                        ? animated
+                        : source;
+            }
+            else
+            {
+                result[vertexIndex] = source;
+            }
+        }
+
+        return result;
     }
 
     private static void RasterizeTriangle(
@@ -590,6 +704,114 @@ public sealed partial class ModelPreviewControl : UserControl
             pixels[target + 2] = 91;
             pixels[target + 3] = 255;
         }
+    }
+
+    private void AnimationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _currentAnimation = AnimationSelector.SelectedItem as SkeletalAnimation;
+        _animationTime = 0f;
+        if (_currentAnimation is null)
+        {
+            SetAnimationPlaying(false);
+            UpdateAnimationControls();
+            ScheduleRender();
+            return;
+        }
+
+        AnimationTimeline.Maximum = Math.Max(0.001, _currentAnimation.Duration);
+        UpdateAnimationControls();
+        SetAnimationPlaying(true);
+        ScheduleRender();
+    }
+
+    private void PlayPauseButton_Click(object sender, RoutedEventArgs e) =>
+        SetAnimationPlaying(!_isAnimationPlaying);
+
+    private void AnimationTimeline_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_isUpdatingTimeline || _currentAnimation is null) return;
+        _animationTime = Math.Clamp((float)e.NewValue, 0f, _currentAnimation.Duration);
+        UpdateAnimationControls();
+        ScheduleRender();
+    }
+
+    private void ExportAnimationButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_animationSet is null || _currentAnimation is null) return;
+        AnimationExportRequested?.Invoke(
+            this,
+            new AnimationExportRequestedEventArgs(_animationSet, _currentAnimation));
+    }
+
+    private void AnimationTimer_Tick(object? sender, object e)
+    {
+        if (!_isAnimationPlaying || _currentAnimation is null) return;
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        float elapsed = (float)(now - _lastAnimationTick).TotalSeconds;
+        _lastAnimationTick = now;
+        if (elapsed <= 0f || elapsed > 1f) elapsed = 1f / 30f;
+
+        float duration = _currentAnimation.Duration;
+        if (duration <= 0.000001f)
+        {
+            _animationTime = 0f;
+            SetAnimationPlaying(false);
+        }
+        else
+        {
+            _animationTime = (_animationTime + elapsed) % duration;
+        }
+
+        UpdateAnimationControls();
+        ScheduleRender();
+    }
+
+    private void SetAnimationPlaying(bool isPlaying)
+    {
+        _isAnimationPlaying = isPlaying && _currentAnimation is not null;
+        if (_isAnimationPlaying)
+        {
+            _lastAnimationTick = DateTimeOffset.UtcNow;
+            _animationTimer.Start();
+        }
+        else
+        {
+            _animationTimer.Stop();
+        }
+
+        PlayPauseIcon.Glyph = _isAnimationPlaying ? "\uE769" : "\uE768";
+    }
+
+    private void UpdateAnimationControls()
+    {
+        _isUpdatingTimeline = true;
+        if (_currentAnimation is null)
+        {
+            AnimationTimeline.Maximum = 1;
+            AnimationTimeline.Value = 0;
+            AnimationTimeText.Text = "00:00.00 / 00:00.00";
+            AnimationFrameText.Text = "1 / 1 帧";
+        }
+        else
+        {
+            AnimationTimeline.Maximum = Math.Max(0.001, _currentAnimation.Duration);
+            AnimationTimeline.Value = Math.Clamp(_animationTime, 0f, _currentAnimation.Duration);
+            AnimationTimeText.Text =
+                $"{FormatAnimationTime(_animationTime)} / {FormatAnimationTime(_currentAnimation.Duration)}";
+            int frame = Math.Clamp(
+                (int)MathF.Floor(_animationTime * _currentAnimation.SampleRate) + 1,
+                1,
+                _currentAnimation.FrameCount);
+            AnimationFrameText.Text = $"{frame:N0} / {_currentAnimation.FrameCount:N0} 帧";
+        }
+        _isUpdatingTimeline = false;
+    }
+
+    private static string FormatAnimationTime(float seconds)
+    {
+        TimeSpan time = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return $"{(int)time.TotalMinutes:00}:{time.Seconds:00}.{time.Milliseconds / 10:00}";
     }
 
     private void TextureModeButton_Click(object sender, RoutedEventArgs e) => SetMode(ModelRenderMode.Textured);

@@ -686,7 +686,9 @@
                                     </Border>
 
                                     <Border Grid.Column="1" Background="{StaticResource SurfaceAltBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="14">
-                                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <ScrollViewer x:Name="GlobalSearchDetailScrollViewer"
+                                                      VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled">
                                             <StackPanel Spacing="12">
                                                 <Grid ColumnSpacing="14">
                                                     <Grid.ColumnDefinitions>
@@ -703,10 +705,126 @@
                                                     </StackPanel>
                                                 </Grid>
 
-                                                <Border Background="{StaticResource SurfaceRaisedBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
+                                                <Border x:Name="GlobalSearchModelPanel"
+                                                        Visibility="Collapsed"
+                                                        Background="{StaticResource SurfaceRaisedBrush}"
+                                                        BorderBrush="{StaticResource AppBorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="10"
+                                                        Padding="12">
+                                                    <Grid RowSpacing="8">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="360" />
+                                                        </Grid.RowDefinitions>
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="完整模型" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
+                                                            <TextBlock x:Name="GlobalSearchModelStatusText"
+                                                                       Grid.Column="1"
+                                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                                       FontSize="11" />
+                                                        </Grid>
+                                                        <ContentControl x:Name="GlobalSearchModelPreviewHost"
+                                                                        Grid.Row="1"
+                                                                        MinHeight="320"
+                                                                        HorizontalContentAlignment="Stretch"
+                                                                        VerticalContentAlignment="Stretch" />
+                                                    </Grid>
+                                                </Border>
+
+                                                <Border x:Name="GlobalSearchFactsPanel"
+                                                        Visibility="Collapsed"
+                                                        Background="{StaticResource SurfaceRaisedBrush}"
+                                                        BorderBrush="{StaticResource AppBorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="10"
+                                                        Padding="12">
                                                     <StackPanel Spacing="8">
-                                                        <TextBlock Text="资料摘要" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
-                                                        <TextBlock x:Name="GlobalSearchDetailPreviewText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                        <TextBlock Text="核心资料" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
+                                                        <ItemsControl x:Name="GlobalSearchFactsList">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <Grid MinHeight="32" ColumnSpacing="12" Padding="0,4">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="116" />
+                                                                            <ColumnDefinition Width="*" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{Binding Label}"
+                                                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                                                   FontSize="12"
+                                                                                   TextWrapping="Wrap" />
+                                                                        <TextBlock Grid.Column="1"
+                                                                                   Text="{Binding Value}"
+                                                                                   Foreground="{StaticResource PrimaryTextBrush}"
+                                                                                   FontSize="12"
+                                                                                   TextWrapping="Wrap" />
+                                                                    </Grid>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <Border x:Name="GlobalSearchSkillsPanel"
+                                                        Visibility="Collapsed"
+                                                        Background="{StaticResource SurfaceRaisedBrush}"
+                                                        BorderBrush="{StaticResource AppBorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="10"
+                                                        Padding="12">
+                                                    <StackPanel Spacing="8">
+                                                        <TextBlock Text="技能与效果" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
+                                                        <ItemsControl x:Name="GlobalSearchSkillsList">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <Border Margin="0,3"
+                                                                            Padding="10"
+                                                                            Background="{StaticResource SubtleSurfaceBrush}"
+                                                                            BorderBrush="{StaticResource AppBorderBrush}"
+                                                                            BorderThickness="1"
+                                                                            CornerRadius="8">
+                                                                        <Grid ColumnSpacing="10">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="54" />
+                                                                                <ColumnDefinition Width="*" />
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <Border Width="50"
+                                                                                    Height="50"
+                                                                                    CornerRadius="7"
+                                                                                    Background="{StaticResource SurfaceAltBrush}"
+                                                                                    VerticalAlignment="Top">
+                                                                                <Image Source="{Binding Icon}" Stretch="UniformToFill" />
+                                                                            </Border>
+                                                                            <StackPanel Grid.Column="1" Spacing="3">
+                                                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                                                    <TextBlock Text="{Binding Name}"
+                                                                                               Foreground="{StaticResource PrimaryTextBrush}"
+                                                                                               FontSize="13"
+                                                                                               FontWeight="SemiBold"
+                                                                                               TextWrapping="Wrap" />
+                                                                                    <TextBlock Text="{Binding Id}"
+                                                                                               Foreground="{StaticResource MutedTextBrush}"
+                                                                                               FontSize="11" />
+                                                                                    <Border Padding="6,1" CornerRadius="6" Background="{StaticResource AccentSurfaceBrush}">
+                                                                                        <TextBlock Text="{Binding UnlockText}"
+                                                                                                   Foreground="{StaticResource AccentTextBrush}"
+                                                                                                   FontSize="10" />
+                                                                                    </Border>
+                                                                                </StackPanel>
+                                                                                <TextBlock Text="{Binding Description}"
+                                                                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                                                                           FontSize="11"
+                                                                                           TextWrapping="Wrap" />
+                                                                            </StackPanel>
+                                                                        </Grid>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
                                                     </StackPanel>
                                                 </Border>
 

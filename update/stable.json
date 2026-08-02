@@ -1,0 +1,25 @@
+{
+    "schemaVersion":  1,
+    "channel":  "stable",
+    "version":  "2.2.0",
+    "releaseNotes":  "新增软件内检查更新、下载、验签、替换和重启，支持远程迁移更新源；新增模型骨骼动画播放、动作选择、时间轴和 BVH 导出；改进模型组合、部件筛选、贴图透明和默认朝向。",
+    "publishedAt":  "2026-08-02T13:15:00+08:00",
+    "bootstrapUrls":  [
+                          "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
+                          "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
+                          "https://gitee.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
+                          "https://raw.githubusercontent.com/oddhw/XunxianDpkViewer/main/update/stable.json",
+                          "https://github.com/oddhw/XunxianDpkViewer/releases/latest/download/stable.json"
+                      ],
+    "packages":  [
+                     {
+                         "url":  "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.2/XunxianDpkViewer.exe",
+                         "sha256":  "F74512AFB1724D16433257ED23ED0D8FE693EAAD23DB6FB9AE72AB925E9C8146",
+                         "signature":  "UkbH+7BMo5b4XRAW1QyoIzKgeMPE7Vj7FB0SwINomKT/dp2fVsgGFNBC13HCft/4JNz+7qG++1EIByaBMIpJvyf9EmShgC3dBgSuj3RMrFKk5b3idIRD56VzbBX2pwU9WCIZOoygxdbzuNCu/7WrzN74V1xZ0g8PitksyG005sETuoxF8q+5uJqoG2oNlWLFTufsKUQLrfHneikYjRPDt3VpsOlvxLom2vQHnTu2Kg8OCH4X+6t5poKq1DsTdJFkOKP40iF8fakM9H5Oqtj7bHnAsHyr4PFZPWx6dG/wuJab8fgHqTjrcBgKXQ8qj488Ad5ZqWybs6aFVKwwwgXgTuA8+JCDcDBTTbbmivX/PYSWbeQpxW91b3QkrSOwGmLs16rHT3EQClOhhUdF9QXUH/9OrN5cswZhjNRpW3j6nKn9Dt+MQkv3cZs+9Kk6Uo62EldyTPsaqx41H96xAyZ8nf+fy8u0gq1VOYy2lbne67u4WXHQSOgVX0A41ccxljdu",
+                         "size":  89923700,
+                         "priority":  100,
+                         "label":  "GitHub Release"
+                     }
+                 ],
+    "signature":  "B0JWo7tnWtE0dy375mWWNJzvA+KKQIlkrsVo4HG4nGPFophN9JzgQxgDtuFrVc43+8Eszsc2De9mK0O3sK6V94jbNl5E6sforde8jra8xsVXfCZbfDpy2frd3MCmtABnJ0CXHEnkJENbmQn0gaZTbyaE3hLnUG1cmYyVFRHMArLlB6OGufsagETbuYluKHSsbeeNaO93IOJ7bdLpV0WCWYsVkn8DfwHAZmdbCcKQHGMK89yUR9fp60dVPoHk+g+Hqz9izGZI6gefdv1IsjZidLNk92NqQG++wXYloE/i3dOWKtVfOE9RDr3+f9YtEQrQjdhr9sciBphtKN6nmUcHnhGDy7B6rUWg28v1IfygnanuXVYPbxzNIqE4B9rpbBYXe+MUyh2lNW4Niu4QZJCfrcVIUYpnxPOgawvm4uBDTjcJoji1Lv8AghX2rhpgebPqVmV9zGAsPhr0ZYnEFbWfqT2XCo5rr8Gn1/hN7WpmgypKKhBR5lQuue11opa9LuKT"
+}

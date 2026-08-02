@@ -9,6 +9,7 @@ public static class SelfTest
     {
         string[] candidates =
         {
+            @"E:\Program Files\腾讯游戏\新寻仙\res",
             @"D:\Program Files\腾讯游戏\新寻仙\res",
             @"C:\Program Files\腾讯游戏\新寻仙\res"
         };

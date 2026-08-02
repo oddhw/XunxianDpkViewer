@@ -35,6 +35,84 @@
             <ToggleButton x:Name="SolidModeButton" Content="实体" IsChecked="True" Click="SolidModeButton_Click" />
             <ToggleButton x:Name="WireframeModeButton" Content="线框" Click="WireframeModeButton_Click" />
         </StackPanel>
+        <Border x:Name="AnimationPanel"
+                Visibility="Collapsed"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Bottom"
+                Margin="14"
+                Padding="10"
+                Background="#E0182334"
+                CornerRadius="8">
+            <Grid ColumnSpacing="10" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="PlayPauseButton"
+                        AutomationProperties.AutomationId="AnimationPlayPauseButton"
+                        AutomationProperties.Name="播放或暂停骨骼动画"
+                        Width="36"
+                        Height="36"
+                        Padding="0"
+                        Click="PlayPauseButton_Click"
+                        ToolTipService.ToolTip="播放或暂停骨骼动画">
+                    <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE769;" FontSize="16" />
+                </Button>
+                <ComboBox x:Name="AnimationSelector"
+                           Grid.Column="1"
+                           Height="36"
+                           MinWidth="100"
+                           SelectionChanged="AnimationSelector_SelectionChanged"
+                           ToolTipService.ToolTip="选择模型动作" />
+                <Grid Grid.Row="1"
+                      Grid.ColumnSpan="3"
+                      ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="AnimationTimeText"
+                               Width="132"
+                               VerticalAlignment="Center"
+                               TextAlignment="Center"
+                               Text="00:00 / 00:00"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                    <Slider x:Name="AnimationTimeline"
+                            Grid.Column="1"
+                            MinWidth="80"
+                            VerticalAlignment="Center"
+                            Minimum="0"
+                            Maximum="1"
+                            ValueChanged="AnimationTimeline_ValueChanged"
+                            ToolTipService.ToolTip="拖动动画时间轴" />
+                    <TextBlock x:Name="AnimationFrameText"
+                               Grid.Column="2"
+                               Width="72"
+                               VerticalAlignment="Center"
+                               TextAlignment="Center"
+                               Text="1 / 1 帧"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                </Grid>
+                <Button x:Name="ExportAnimationButton"
+                        AutomationProperties.AutomationId="AnimationExportButton"
+                        AutomationProperties.Name="导出当前 BVH 骨骼动画"
+                        Grid.Column="2"
+                        Height="36"
+                        Click="ExportAnimationButton_Click"
+                        ToolTipService.ToolTip="导出当前骨骼动画">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE74E;" FontSize="14" />
+                        <TextBlock Text="导出 BVH" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
         <TextBlock x:Name="EmptyText"
                    Text="选择一个 PMF 模型查看实体预览"
                    Foreground="{StaticResource MutedTextBrush}"

@@ -30,6 +30,17 @@ public static class UpdateInstaller
         string source = Path.GetFullPath(downloadedExecutable);
         string target = Path.GetFullPath(targetExecutable);
         if (!File.Exists(source)) throw new FileNotFoundException("更新文件不存在。", source);
+        RetryFileOperation(
+            () =>
+            {
+                using FileStream stream = new(
+                    source,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read);
+                if (stream.Length == 0) throw new InvalidDataException("更新文件为空。");
+            },
+            "更新文件仍被占用，无法启动安装程序。");
 
         var startInfo = new ProcessStartInfo
         {
@@ -70,12 +81,22 @@ public static class UpdateInstaller
 
             Directory.CreateDirectory(targetFolder);
             TryDelete(stagedPath);
-            File.Copy(source, stagedPath, overwrite: true);
-            VerifyCopiedFile(source, stagedPath);
+            RetryFileOperation(
+                () => File.Copy(source, stagedPath, overwrite: true),
+                "复制更新文件失败。");
+            RetryFileOperation(
+                () => VerifyCopiedFile(source, stagedPath),
+                "校验更新文件失败。");
 
             if (File.Exists(target))
-                File.Copy(target, backupPath, overwrite: true);
-            File.Move(stagedPath, target, overwrite: true);
+            {
+                RetryFileOperation(
+                    () => File.Copy(target, backupPath, overwrite: true),
+                    "备份旧版本失败。");
+            }
+            RetryFileOperation(
+                () => File.Move(stagedPath, target, overwrite: true),
+                "替换旧版本失败。");
 
             var startInfo = new ProcessStartInfo
             {
@@ -209,12 +230,37 @@ public static class UpdateInstaller
     {
         try
         {
-            if (File.Exists(backup)) File.Copy(backup, target, overwrite: true);
+            if (File.Exists(backup))
+            {
+                RetryFileOperation(
+                    () => File.Copy(backup, target, overwrite: true),
+                    "恢复旧版本失败。");
+            }
         }
         catch
         {
             // The update log retains the original failure for manual recovery.
         }
+    }
+
+    private static void RetryFileOperation(Action operation, string message)
+    {
+        Exception? lastError = null;
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                operation();
+                return;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                lastError = exception;
+                Thread.Sleep(250);
+            }
+        }
+
+        throw new IOException(message, lastError);
     }
 
     private static void TryDelete(string path)

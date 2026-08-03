@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "channel": "stable",
   "version": "2.2.0",
-  "releaseNotes": "新增软件内检查更新、下载、验签、替换和重启，支持远程迁移更新源；新增模型骨骼动画播放、动作选择、时间轴和 BVH 导出；改进模型组合、部件筛选、贴图透明和默认朝向。",
+  "releaseNotes": "",
   "publishedAt": "2026-08-02T13:15:00+08:00",
   "bootstrapUrls": [
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",

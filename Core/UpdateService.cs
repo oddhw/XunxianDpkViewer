@@ -17,7 +17,7 @@ public sealed class UpdateService
     ];
 
     private const string UpdateSigningPublicKey =
-        "BgIAAACkAABSU0ExAAwAAAEAAQBN/0stnV9weID7c3sXFwvIW/52uYYM+CZzD0RfWEA8QRXpKi4hy8Qn+PtG9DCoRDO2dBcqSBnQ2DwIU/XBQVe4XHc+KbcBhR1oApNsR5l+vbWlolRGdjA7fEg5AA1fL8rcxBmV5/+GxkiOaqCx1r0BxVgZ8YV+2iCRXoGIJ4+MVI0U++DsJdE98bqzS7A9Gys6Y0teJwK++oy5x6UyJTQPpuIaHda0/k3LiB8Lt40Z4vnJJBhcrvVEV03sqAFWFseBrjn7lVevFPeysmpLVLAw2LgrvHoW6P2anANhjMbcwp6VKWnZtcEtOonB1Qm65kJh72FCeVOIm81Zy67G0M6ZDiAS5TYtV5+mSQHxCFFYvaXVQY1OFnNwwhHHQFRaDlEkdIsexkR4NQhyoPa6Xwe5yJmUwghTiJtTnnBkrqNwY3IhYrlzrrflX6VmRjHH//N9RnWD/udCIP+maqie+SLrqSUY3Sj2vU/D1edo1YoVoVKN4rKNmXNFAmw++4pTAq4=";
+        "BgIAAACkAABSU0ExABAAAAEAAQCVkg9EgvSxaacAGd83JA+KRFf2NN+uRw/+yzf2j8a0jwh2YUQXlseghjR0K1tgS2xlJTkVOm63nUCTWRW3TM88v5itx1kb2DMH03bt25H2DVycoUL3UkCkIMOm7POaHNAL9R7g/KH55QYog63dLX4LvAT9XZeeUabR0Z0SqQl4F/3Y9JSTOWGEOzmkSjDt6Mv4qBKzMXDlQrTNfFcZEP+58nV06027gT8bLqs/rELOcWoQY145U12Sk0CGrAHY1w1kcIbvnWuzNpbriHb+tp3kK4JhibrCchdOjVkLHoIzQQfEgoKRLXGK+R4NX8tBAJeSp1uydWqaC6/nCSMQzR3U2m57nY4dwc11XaV7jC4WMlNMYOoOWU/vL1pXlZk2XhxFLmpQsVkr0RMEnAbdfsyfNhKh4vU0zsdVPDk/OP/h5XSeHIZWzhKrirFra1tvKzulIfdWi3mYi6Ut2K/KpjuZstJKUyTPzBLhiu3PYs1TxanMDcALnqwkeLPug+vDMXQhqSxrEnpsxlJl18sYwcGyZBZNOch6dhZMZ3VzVGsBwl9jv6OLqCv/rPxH7XXT6qZIR3TrUNgTDfgdoaHy4IJbPK+EE350cUsKiVPMzlbGp9REhXufFVH1HmIvm0m+npFdh6au05WCfJPzigmUssH6P4HOARkaesoH8Y3ho73YyQ==";
 
     private static readonly HttpClient Client = CreateClient();
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -93,29 +93,38 @@ public sealed class UpdateService
         IProgress<UpdateDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        Exception? lastError = null;
+        var errors = new List<string>();
         foreach (UpdatePackage package in manifest.Packages
                      .Where(IsValidPackage)
                      .OrderBy(item => item.Priority))
         {
             try
             {
+                progress?.Report(new UpdateDownloadProgress(
+                    0,
+                    package.Size > 0 ? package.Size : null,
+                    0,
+                    GetPackageLabel(package)));
                 return await DownloadPackageAsync(manifest.Version, package, progress, cancellationToken);
             }
             catch (OperationCanceledException)
             {
                 throw;
             }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new InvalidOperationException($"更新文件处理失败：{exception.Message}", exception);
+            }
             catch (Exception exception)
             {
-                lastError = exception;
+                errors.Add($"{GetPackageLabel(package)}：{exception.Message}");
             }
         }
 
         throw new InvalidOperationException(
-            "所有更新下载源均不可用。" +
-            (lastError is null ? string.Empty : $" 最后一次错误：{lastError.Message}"),
-            lastError);
+            errors.Count == 0
+                ? "更新清单中没有可用的下载地址。"
+                : $"更新下载失败。{string.Join("；", errors.Take(3))}");
     }
 
     public static int CompareVersions(string? left, string? right)
@@ -190,52 +199,67 @@ public sealed class UpdateService
         IProgress<UpdateDownloadProgress>? progress,
         CancellationToken cancellationToken)
     {
-        string updateFolder = Path.Combine(
+        string versionFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "XunxianDpkViewer",
             "updates",
             SanitizePathPart(version));
+        string updateFolder = Path.Combine(versionFolder, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(updateFolder);
 
         string finalPath = Path.Combine(updateFolder, "XunxianDpkViewer.exe");
         string temporaryPath = finalPath + ".download";
-        TryDelete(temporaryPath);
+        string sourceLabel = GetPackageLabel(package);
 
         try
         {
-            using HttpResponseMessage response = await Client.GetAsync(
-                package.Url,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            long? totalBytes = response.Content.Headers.ContentLength;
-            await using Stream input = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var output = new FileStream(
-                temporaryPath,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None,
-                1024 * 128,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-
-            byte[] buffer = new byte[1024 * 128];
+            byte[] actualHashBytes;
             long received = 0;
-            while (true)
-            {
-                int count = await input.ReadAsync(buffer, cancellationToken);
-                if (count == 0) break;
+            long? totalBytes;
 
-                await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
-                hash.AppendData(buffer, 0, count);
-                received += count;
-                double? percentage = totalBytes > 0 ? received * 100d / totalBytes.Value : null;
-                progress?.Report(new UpdateDownloadProgress(received, totalBytes, percentage));
+            using (HttpResponseMessage response = await Client.GetAsync(
+                       package.Url,
+                       HttpCompletionOption.ResponseHeadersRead,
+                       cancellationToken))
+            {
+                response.EnsureSuccessStatusCode();
+                totalBytes = response.Content.Headers.ContentLength;
+
+                await using Stream input = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using (var output = new FileStream(
+                                 temporaryPath,
+                                 FileMode.CreateNew,
+                                 FileAccess.Write,
+                                 FileShare.None,
+                                 1024 * 128,
+                                 FileOptions.Asynchronous | FileOptions.SequentialScan))
+                using (IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+                {
+                    byte[] buffer = new byte[1024 * 128];
+                    while (true)
+                    {
+                        int count = await input.ReadAsync(buffer, cancellationToken);
+                        if (count == 0) break;
+
+                        await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+                        hash.AppendData(buffer, 0, count);
+                        received += count;
+                        double? percentage = totalBytes > 0
+                            ? received * 100d / totalBytes.Value
+                            : null;
+                        progress?.Report(new UpdateDownloadProgress(
+                            received,
+                            totalBytes,
+                            percentage,
+                            sourceLabel));
+                    }
+
+                    await output.FlushAsync(cancellationToken);
+                    actualHashBytes = hash.GetHashAndReset();
+                }
             }
 
-            await output.FlushAsync(cancellationToken);
-            byte[] actualHashBytes = hash.GetHashAndReset();
+            // All streams must be closed before the temporary file is renamed.
             string actualHash = Convert.ToHexString(actualHashBytes);
             string expectedHash = NormalizeHash(package.Sha256);
             if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
@@ -250,7 +274,7 @@ public sealed class UpdateService
         }
         catch
         {
-            TryDelete(temporaryPath);
+            TryDeleteDirectory(updateFolder);
             throw;
         }
     }
@@ -389,6 +413,13 @@ public sealed class UpdateService
         return Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) ? uri.Host : url;
     }
 
+    private static string GetPackageLabel(UpdatePackage package)
+    {
+        return string.IsNullOrWhiteSpace(package.Label)
+            ? GetHostLabel(package.Url)
+            : package.Label.Trim();
+    }
+
     private static void TryDelete(string path)
     {
         try
@@ -401,14 +432,31 @@ public sealed class UpdateService
         }
     }
 
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+            // Cleanup is retried after the updater exits.
+        }
+    }
+
     private static HttpClient CreateClient()
     {
-        var client = new HttpClient
+        var handler = new SocketsHttpHandler
+        {
+            ConnectTimeout = TimeSpan.FromSeconds(12)
+        };
+        var client = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromMinutes(15)
         };
+        string version = typeof(UpdateService).Assembly.GetName().Version?.ToString(2) ?? "1.0";
         client.DefaultRequestHeaders.UserAgent.Add(
-            new ProductInfoHeaderValue("XunxianDpkViewer", "2.1"));
+            new ProductInfoHeaderValue("XunxianDpkViewer", version));
         return client;
     }
 

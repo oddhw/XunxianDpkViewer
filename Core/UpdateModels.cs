@@ -64,4 +64,5 @@ public sealed record UpdateDownloadResult(
 public readonly record struct UpdateDownloadProgress(
     long BytesReceived,
     long? TotalBytes,
-    double? Percentage);
+    double? Percentage,
+    string? SourceLabel = null);

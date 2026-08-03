@@ -10,9 +10,38 @@ GitHub 或 GitCode 下发新的服务器地址，再逐步迁移下载源。
 发布前：
 
 1. 从 `stable.template.json` 复制出 `stable.json`。
-2. 填写版本、更新说明、引导地址和下载镜像。
+2. 填写版本、引导地址和下载镜像。`releaseNotes` 可以保持为空，客户端不再显示详细更新内容。
 3. 运行 `tools\SignUpdateManifest.ps1` 生成文件大小、SHA-256 和签名。
 4. 将同一份 `stable.json` 放到每个引导地址。
 5. 将完全相同的已签名 EXE 放到清单中的下载地址。
+
+## 国内下载镜像
+
+建议把完全相同的 EXE 同时上传到 GitCode Release 和 GitHub Release。清单中的
+`packages` 按 `priority` 从小到大尝试，GitCode 国内镜像设为 `10`，GitHub 设为
+`100`。不要使用无法长期控制的公共下载代理。
+
+```json
+"packages": [
+  {
+    "url": "这里填写 GitCode Release 返回的附件下载直链",
+    "sha256": "",
+    "signature": "",
+    "size": 0,
+    "priority": 10,
+    "label": "GitCode 国内镜像"
+  },
+  {
+    "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v版本号/XunxianDpkViewer.exe",
+    "sha256": "",
+    "signature": "",
+    "size": 0,
+    "priority": 100,
+    "label": "GitHub 备用源"
+  }
+]
+```
+
+也可以给签名脚本传入 `-MirrorUrl`，脚本会把该地址作为第一下载源写入清单。
 
 不要删除或公开私钥。丢失私钥后，已经发布的旧版本将无法信任新更新包。

@@ -5,6 +5,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PackagePath,
 
+    [string]$MirrorUrl,
+
+    [string]$MirrorLabel = "GitCode Mirror",
+
     [string]$PrivateKey = $env:XUNXIAN_UPDATE_PRIVATE_KEY
 )
 
@@ -17,6 +21,32 @@ $packageFullPath = (Resolve-Path -LiteralPath $PackagePath).Path
 $privateKeyPath = (Resolve-Path -LiteralPath $PrivateKey).Path
 
 $manifestObject = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not [string]::IsNullOrWhiteSpace($MirrorUrl)) {
+    $mirrorUri = $null
+    if (-not [Uri]::TryCreate($MirrorUrl, [UriKind]::Absolute, [ref]$mirrorUri) -or
+        $mirrorUri.Scheme -ne "https") {
+        throw "MirrorUrl must be an absolute HTTPS URL."
+    }
+
+    $packages = @($manifestObject.packages)
+    $existingMirror = $packages | Where-Object { $_.url -eq $MirrorUrl } | Select-Object -First 1
+    if ($null -eq $existingMirror) {
+        $mirrorPackage = [PSCustomObject]@{
+            url       = $MirrorUrl
+            sha256    = ""
+            signature = ""
+            size      = 0
+            priority  = 10
+            label     = $MirrorLabel
+        }
+        $manifestObject.packages = @($mirrorPackage) + $packages
+    }
+    else {
+        $existingMirror.priority = 10
+        $existingMirror.label = $MirrorLabel
+    }
+}
+
 $packageBytes = [System.IO.File]::ReadAllBytes($packageFullPath)
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
 try {

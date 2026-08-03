@@ -3655,19 +3655,6 @@ public sealed partial class MainWindow : Window
         UpdateChannelManifest manifest,
         string? manifestUrl)
     {
-        var notes = new TextBlock
-        {
-            Text = string.IsNullOrWhiteSpace(manifest.ReleaseNotes)
-                ? "此版本未提供更新说明。"
-                : manifest.ReleaseNotes.Trim(),
-            TextWrapping = TextWrapping.Wrap
-        };
-        var notesScroller = new ScrollViewer
-        {
-            Content = notes,
-            MaxHeight = 220,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        };
         var progressBar = new ProgressBar
         {
             Minimum = 0,
@@ -3686,7 +3673,6 @@ public sealed partial class MainWindow : Window
             FontSize = 18,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
         });
-        panel.Children.Add(notesScroller);
         if (Uri.TryCreate(manifestUrl, UriKind.Absolute, out Uri? sourceUri))
         {
             panel.Children.Add(new TextBlock
@@ -3735,9 +3721,12 @@ public sealed partial class MainWindow : Window
                         progressBar.IsIndeterminate = false;
                         progressBar.Value = percentage;
                     }
+                    string source = string.IsNullOrWhiteSpace(value.SourceLabel)
+                        ? "更新源"
+                        : value.SourceLabel;
                     progressText.Text = value.TotalBytes is long total
-                        ? $"正在下载 {FormatByteSize(value.BytesReceived)} / {FormatByteSize(total)}"
-                        : $"正在下载 {FormatByteSize(value.BytesReceived)}";
+                        ? $"正在从 {source} 下载 {FormatByteSize(value.BytesReceived)} / {FormatByteSize(total)}"
+                        : $"正在从 {source} 下载 {FormatByteSize(value.BytesReceived)}";
                 });
 
                 UpdateDownloadResult download = await _updateService.DownloadAsync(

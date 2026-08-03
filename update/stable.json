@@ -2,7 +2,7 @@
     "schemaVersion":  1,
     "channel":  "stable",
     "version":  "2.2.0",
-    "releaseNotes":  "新增软件内检查更新、下载、验签、替换和重启，支持远程迁移更新源；新增模型骨骼动画播放、动作选择、时间轴和 BVH 导出；改进模型组合、部件筛选、贴图透明和默认朝向。",
+    "releaseNotes":  "",
     "publishedAt":  "2026-08-02T13:15:00+08:00",
     "bootstrapUrls":  [
                           "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
@@ -14,12 +14,12 @@
     "packages":  [
                      {
                          "url":  "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.2/XunxianDpkViewer.exe",
-                         "sha256":  "F74512AFB1724D16433257ED23ED0D8FE693EAAD23DB6FB9AE72AB925E9C8146",
-                         "signature":  "UkbH+7BMo5b4XRAW1QyoIzKgeMPE7Vj7FB0SwINomKT/dp2fVsgGFNBC13HCft/4JNz+7qG++1EIByaBMIpJvyf9EmShgC3dBgSuj3RMrFKk5b3idIRD56VzbBX2pwU9WCIZOoygxdbzuNCu/7WrzN74V1xZ0g8PitksyG005sETuoxF8q+5uJqoG2oNlWLFTufsKUQLrfHneikYjRPDt3VpsOlvxLom2vQHnTu2Kg8OCH4X+6t5poKq1DsTdJFkOKP40iF8fakM9H5Oqtj7bHnAsHyr4PFZPWx6dG/wuJab8fgHqTjrcBgKXQ8qj488Ad5ZqWybs6aFVKwwwgXgTuA8+JCDcDBTTbbmivX/PYSWbeQpxW91b3QkrSOwGmLs16rHT3EQClOhhUdF9QXUH/9OrN5cswZhjNRpW3j6nKn9Dt+MQkv3cZs+9Kk6Uo62EldyTPsaqx41H96xAyZ8nf+fy8u0gq1VOYy2lbne67u4WXHQSOgVX0A41ccxljdu",
-                         "size":  89923700,
+                         "sha256":  "DF5C5FB3352A416E828C0E43371A443CF23BA2569AB303BB7F566A18FB9188E5",
+                         "signature":  "xnuf1V0ufq/sRVUVSXPexXAgg4onBAp+JxYWOP7cO74yt3vZou7Bn3mSxXzcamrOZRhKigQHqS0bG6+wJEAOb6d3ntskdvWEGX02cIBDAg2k2QIGLxhVB1y1jbdFQAfpuqA6ex72sVZRF144KM4aybPdFc0aBxKgNli9TBFfAkCpUFTGXVm8rhbMiwU9o/ayAs0vArjX27TG2/bsDCxRiarUJTgI3XW3uxxeDNrORf0/ohuv8Vz3DqNKBO56+7OdHi2fq5kErvYv98n4LmUuNufxkYlSuW4/oENROuePpBmPfnnJHY7OZA+kaJeexhY6Z9sadbofS6Dpz2Y1FhFA7WyrTcAbfojh28NhAJ5A9C4Zcnj0VogNmzVuTW+QFvx/AmnYG4cCxx5yCClEq3iGhcA3QglD1fj9QzFH6u8+QsTrEn/VSBIqIj8SHecGLZ7Ju1sKGGe9W56BWArW+y6wWyPY24b7xd1hhzF+haf+duEWO9HoudW0Z2zv6g1eijfRasGylDYFGjPRGLdEfgl+FJK3ckPEuHHQmj3AZmw9AzOKwG34E56lc2wb+90aeLlkqUtsfD8dWhlGPGJO7zNxFSDlf/KtrwKm7RPSkhiIxj1SYmpP9R9QiZ6B/EpJHYDrnm21sKdw0rcgAhKlfoeY57eiAV23m5UOys82HhmcPU4=",
+                         "size":  89869272,
                          "priority":  100,
                          "label":  "GitHub Release"
                      }
                  ],
-    "signature":  "B0JWo7tnWtE0dy375mWWNJzvA+KKQIlkrsVo4HG4nGPFophN9JzgQxgDtuFrVc43+8Eszsc2De9mK0O3sK6V94jbNl5E6sforde8jra8xsVXfCZbfDpy2frd3MCmtABnJ0CXHEnkJENbmQn0gaZTbyaE3hLnUG1cmYyVFRHMArLlB6OGufsagETbuYluKHSsbeeNaO93IOJ7bdLpV0WCWYsVkn8DfwHAZmdbCcKQHGMK89yUR9fp60dVPoHk+g+Hqz9izGZI6gefdv1IsjZidLNk92NqQG++wXYloE/i3dOWKtVfOE9RDr3+f9YtEQrQjdhr9sciBphtKN6nmUcHnhGDy7B6rUWg28v1IfygnanuXVYPbxzNIqE4B9rpbBYXe+MUyh2lNW4Niu4QZJCfrcVIUYpnxPOgawvm4uBDTjcJoji1Lv8AghX2rhpgebPqVmV9zGAsPhr0ZYnEFbWfqT2XCo5rr8Gn1/hN7WpmgypKKhBR5lQuue11opa9LuKT"
+    "signature":  "HnqiUiGSYgqcDsidSeDYVhaSKtg3LtMyrkZLDwU/C4qhLhKJl0Q5+QJRxoRoh+2MVLyZfz9faxELRl/YmnA2HcxvYlqrsL+QyaqZ39loVG3+6RrIYtwGlteyet/O1uaAhJCi39eZZAze821srL36NAqZaE9B8T0lx9nVioEOYPyna/sHOhs76o21oB0hP/MwTDPjU5g67XPNO9QFvW/z959QMW/0/DDqc78XyMxhekYGQeS+J9C1pGxZdQoKkWIPh3nCDgnbLgHl5KcCsYs/GDOaarmeYAulWzoRXhVPDBKyRb3AbV3BcNVnZQ+TqN9lFoOlpXtFn650qI7gP4Te1WE3Jsd/E68gC8R04JlmyyMDyXALrNHhGJySfcSIRNZJpLifwldJ1tv4YXKwrphZ0lWzZm5IGiLVLoKG2q/K+SwsOvP6c+jCjmuojyEctptxae3EcI/dIpuK2TiSkziK6qZMRZcgx4vaSdeaDwi8Q4XIDs0pt/fXbJIufKZwWgpvESUuXswBvdjZwBWPXw2CYowmIsvTOsc9fmmRQzEpTC8YBwiR+JKD7EwNn/cvFtkKCc+nITED41fM1vg+NWPL/CTSdqcVXzmWP+grPQc5jpAb1Ry/9a5cW8pSXfldfAdjW4w6vSmsUJL1DMbtD9OELQZKW9AV0or5Zy7FMn5Sp0o="
 }

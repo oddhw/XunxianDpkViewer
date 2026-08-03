@@ -21,6 +21,22 @@ $packageFullPath = (Resolve-Path -LiteralPath $PackagePath).Path
 $privateKeyPath = (Resolve-Path -LiteralPath $PrivateKey).Path
 
 $manifestObject = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$manifestVersionText = (([string]$manifestObject.version).Trim().TrimStart([char[]]"vV") -split "[-+]")[0]
+$manifestVersion = $null
+if (-not [Version]::TryParse($manifestVersionText, [ref]$manifestVersion)) {
+    throw "Manifest version is invalid: $($manifestObject.version)"
+}
+$packageVersionText = [Diagnostics.FileVersionInfo]::GetVersionInfo($packageFullPath).FileVersion
+$packageVersion = $null
+if (-not [Version]::TryParse($packageVersionText, [ref]$packageVersion)) {
+    throw "Package file version is invalid: $packageVersionText"
+}
+if ($manifestVersion.Major -ne $packageVersion.Major -or
+    $manifestVersion.Minor -ne $packageVersion.Minor -or
+    $manifestVersion.Build -ne $packageVersion.Build) {
+    throw "Version mismatch: manifest $manifestVersion, package $packageVersion."
+}
+
 if (-not [string]::IsNullOrWhiteSpace($MirrorUrl)) {
     $mirrorUri = $null
     if (-not [Uri]::TryCreate($MirrorUrl, [UriKind]::Absolute, [ref]$mirrorUri) -or
@@ -47,12 +63,13 @@ if (-not [string]::IsNullOrWhiteSpace($MirrorUrl)) {
     }
 }
 
-$packageBytes = [System.IO.File]::ReadAllBytes($packageFullPath)
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
+$packageStream = [System.IO.File]::OpenRead($packageFullPath)
 try {
-    $hash = $sha256.ComputeHash($packageBytes)
+    $hash = $sha256.ComputeHash($packageStream)
 }
 finally {
+    $packageStream.Dispose()
     $sha256.Dispose()
 }
 

@@ -23,7 +23,8 @@ namespace XunxianDpkViewer;
 
 public sealed partial class MainWindow : Window
 {
-    private const string AppVersion = "2.1";
+    private static readonly string AppVersion =
+        typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.0";
     private const string AppAuthor = "黑风岭-梵心似火";
     private readonly DpkWorkspace _workspace = new();
     private List<AssetItemViewModel> _items = new();
@@ -3673,6 +3674,14 @@ public sealed partial class MainWindow : Window
             FontSize = 18,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
         });
+        if (!string.IsNullOrWhiteSpace(manifest.ReleaseNotes))
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = manifest.ReleaseNotes.Trim(),
+                TextWrapping = TextWrapping.Wrap
+            });
+        }
         if (Uri.TryCreate(manifestUrl, UriKind.Absolute, out Uri? sourceUri))
         {
             panel.Children.Add(new TextBlock
@@ -6645,6 +6654,10 @@ public sealed partial class MainWindow : Window
         };
         await dialog.ShowAsync();
     }
+
+    internal Task ShowUpdateRecoveryNoticeAsync() => ShowErrorAsync(
+        "更新未完成",
+        "新版本替换失败，软件已自动恢复并重新启动旧版本。请稍后重试；详细原因已记录到本机更新日志中。");
 
     private static string SanitizeFileName(string value)
     {

@@ -11,6 +11,9 @@ public static class UpdateInstaller
     private const string CleanupArgument = "--update-cleanup=";
     private const string BackupArgument = "--update-backup=";
     private const string LauncherSourceArgument = "--launcher-source=";
+    private const string RecoveryArgument = "--update-recovered";
+    private const string VerifyManifestArgument = "--verify-update-manifest=";
+    private const string CanonicalExecutableName = "XunxianDpkViewer.exe";
 
     public static bool IsApplyMode(IReadOnlyList<string> arguments) =>
         arguments.Any(argument => argument.Equals(ApplyArgument, StringComparison.OrdinalIgnoreCase));
@@ -72,6 +75,7 @@ public static class UpdateInstaller
                               throw new InvalidOperationException("更新目标目录无效。");
         string stagedPath = target + ".update-new";
         string backupPath = target + ".update-backup";
+        bool backupCreated = false;
 
         try
         {
@@ -80,6 +84,7 @@ public static class UpdateInstaller
                 WaitForProcessExit(processId);
 
             Directory.CreateDirectory(targetFolder);
+            TryDelete(backupPath);
             TryDelete(stagedPath);
             RetryFileOperation(
                 () => File.Copy(source, stagedPath, overwrite: true),
@@ -93,28 +98,37 @@ public static class UpdateInstaller
                 RetryFileOperation(
                     () => File.Copy(target, backupPath, overwrite: true),
                     "备份旧版本失败。");
+                backupCreated = true;
             }
             RetryFileOperation(
                 () => File.Move(stagedPath, target, overwrite: true),
                 "替换旧版本失败。");
 
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = target,
-                WorkingDirectory = targetFolder,
-                UseShellExecute = false
-            };
             string? cleanupFolder = ReadValue(arguments, CleanupArgument);
-            if (!string.IsNullOrWhiteSpace(cleanupFolder))
-                startInfo.ArgumentList.Add(CleanupArgument + cleanupFolder);
-            startInfo.ArgumentList.Add(BackupArgument + backupPath);
-            Process.Start(startInfo);
+            string? verifyManifest = ReadValue(arguments, VerifyManifestArgument);
+            StartTarget(target, cleanupFolder, backupPath, recovered: false, verifyManifest);
             WriteUpdateLog("更新完成并已启动新版本。");
         }
         catch (Exception exception)
         {
             WriteUpdateLog($"更新失败：{exception}");
-            TryRestoreBackup(target, backupPath);
+            if (TryRestoreBackup(target, backupPath, backupCreated))
+            {
+                try
+                {
+                    StartTarget(
+                        target,
+                        null,
+                        backupPath,
+                        recovered: true,
+                        ReadValue(arguments, VerifyManifestArgument));
+                    WriteUpdateLog("[RECOVERY_RESTARTED] 已恢复并重新启动旧版本。");
+                }
+                catch (Exception restartException)
+                {
+                    WriteUpdateLog($"旧版本已恢复，但重新启动失败：{restartException}");
+                }
+            }
         }
         finally
         {
@@ -126,7 +140,6 @@ public static class UpdateInstaller
     {
         string? cleanupFolder = ReadValue(arguments, CleanupArgument);
         string? backupPath = ReadValue(arguments, BackupArgument);
-        if (string.IsNullOrWhiteSpace(cleanupFolder) && string.IsNullOrWhiteSpace(backupPath)) return;
 
         _ = Task.Run(async () =>
         {
@@ -148,12 +161,13 @@ public static class UpdateInstaller
                             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                             "XunxianDpkViewer",
                             "updates"));
-                        if (fullPath.StartsWith(updateRoot, StringComparison.OrdinalIgnoreCase) &&
+                        if (IsPathInside(updateRoot, fullPath) &&
                             Directory.Exists(fullPath))
                         {
                             Directory.Delete(fullPath, recursive: true);
                         }
                     }
+                    CleanupOldLaunchers();
                     return;
                 }
                 catch
@@ -169,6 +183,47 @@ public static class UpdateInstaller
 
     public static bool HasLauncherSourceArgument(IReadOnlyList<string> arguments) =>
         ReadValue(arguments, LauncherSourceArgument) is not null;
+
+    public static bool IsRecoveryRestart(IReadOnlyList<string> arguments) =>
+        arguments.Any(argument => argument.Equals(RecoveryArgument, StringComparison.OrdinalIgnoreCase));
+
+    public static string PrepareCanonicalLauncher(string sourcePath)
+    {
+        string source = Path.GetFullPath(sourcePath);
+        using SHA256 sha256 = SHA256.Create();
+        using FileStream stream = File.OpenRead(source);
+        string fingerprint = Convert.ToHexString(sha256.ComputeHash(stream));
+        string launcherFolder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "XunxianDpkViewer",
+            "launcher",
+            fingerprint);
+        string canonicalPath = Path.Combine(launcherFolder, CanonicalExecutableName);
+        if (File.Exists(canonicalPath))
+        {
+            try
+            {
+                VerifyCopiedFile(source, canonicalPath);
+                return canonicalPath;
+            }
+            catch
+            {
+                TryDelete(canonicalPath);
+            }
+        }
+
+        Directory.CreateDirectory(launcherFolder);
+        string temporaryPath = canonicalPath + ".new";
+        TryDelete(temporaryPath);
+        RetryFileOperation(
+            () => File.Copy(source, temporaryPath, overwrite: true),
+            "创建标准名称启动副本失败。");
+        VerifyCopiedFile(source, temporaryPath);
+        RetryFileOperation(
+            () => File.Move(temporaryPath, canonicalPath, overwrite: true),
+            "保存标准名称启动副本失败。");
+        return canonicalPath;
+    }
 
     private static string? ReadValue(IReadOnlyList<string> arguments, string prefix)
     {
@@ -226,27 +281,90 @@ public static class UpdateInstaller
             throw new InvalidDataException("复制后的更新文件校验失败。");
     }
 
-    private static void TryRestoreBackup(string target, string backup)
+    private static bool TryRestoreBackup(string target, string backup, bool backupCreated)
     {
         try
         {
-            if (File.Exists(backup))
+            if (!backupCreated || !File.Exists(backup)) return File.Exists(target);
+            RetryFileOperation(
+                () => File.Copy(backup, target, overwrite: true),
+                "恢复旧版本失败。");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            WriteUpdateLog($"恢复旧版本失败：{exception}");
+            return false;
+        }
+    }
+
+    private static void StartTarget(
+        string target,
+        string? cleanupFolder,
+        string backupPath,
+        bool recovered,
+        string? verifyManifest)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = target,
+            WorkingDirectory = Path.GetDirectoryName(target) ?? Directory.GetCurrentDirectory(),
+            UseShellExecute = false
+        };
+        if (!string.IsNullOrWhiteSpace(cleanupFolder))
+            startInfo.ArgumentList.Add(CleanupArgument + cleanupFolder);
+        if (!string.IsNullOrWhiteSpace(backupPath))
+            startInfo.ArgumentList.Add(BackupArgument + backupPath);
+        if (recovered)
+            startInfo.ArgumentList.Add(RecoveryArgument);
+        if (!string.IsNullOrWhiteSpace(verifyManifest))
+            startInfo.ArgumentList.Add(VerifyManifestArgument + verifyManifest);
+        _ = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动程序。");
+    }
+
+    private static void CleanupOldLaunchers()
+    {
+        string launcherRoot = Path.GetFullPath(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "XunxianDpkViewer",
+            "launcher"));
+        if (!Directory.Exists(launcherRoot)) return;
+
+        string? processPath = Environment.ProcessPath;
+        string? currentFolder = string.IsNullOrWhiteSpace(processPath)
+            ? null
+            : Path.GetDirectoryName(Path.GetFullPath(processPath));
+        foreach (string directory in Directory.EnumerateDirectories(launcherRoot))
+        {
+            if (currentFolder is not null &&
+                Path.GetFullPath(directory).Equals(currentFolder, StringComparison.OrdinalIgnoreCase))
             {
-                RetryFileOperation(
-                    () => File.Copy(backup, target, overwrite: true),
-                    "恢复旧版本失败。");
+                continue;
+            }
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // A different running instance may still use this launcher.
             }
         }
-        catch
+        foreach (string file in Directory.EnumerateFiles(launcherRoot))
         {
-            // The update log retains the original failure for manual recovery.
+            if (processPath is not null &&
+                Path.GetFullPath(file).Equals(Path.GetFullPath(processPath), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            TryDelete(file);
         }
     }
 
     private static void RetryFileOperation(Action operation, string message)
     {
         Exception? lastError = null;
-        for (int attempt = 0; attempt < 20; attempt++)
+        for (int attempt = 0; attempt < 40; attempt++)
         {
             try
             {
@@ -261,6 +379,16 @@ public static class UpdateInstaller
         }
 
         throw new IOException(message, lastError);
+    }
+
+    private static bool IsPathInside(string root, string candidate)
+    {
+        string normalizedRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string normalizedCandidate = Path.GetFullPath(candidate);
+        return normalizedCandidate.StartsWith(
+            normalizedRoot + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static void TryDelete(string path)

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "2.2.0",
-  "releaseNotes": "",
-  "publishedAt": "2026-08-02T13:15:00+08:00",
+  "version": "2.2.1",
+  "releaseNotes": "2.2.1修复了一个软件更新相关的bug，抓紧更新，不然之后容易收不到更新提示，更新完随时贴吧反馈问题",
+  "publishedAt": "2026-08-03T13:20:00+08:00",
   "bootstrapUrls": [
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
@@ -13,7 +13,7 @@
   ],
   "packages": [
     {
-      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.2/XunxianDpkViewer.exe",
+      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.2.1/XunxianDpkViewer.exe",
       "sha256": "",
       "signature": "",
       "size": 0,

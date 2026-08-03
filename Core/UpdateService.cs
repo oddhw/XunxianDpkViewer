@@ -16,8 +16,13 @@ public sealed class UpdateService
         "https://github.com/oddhw/XunxianDpkViewer/releases/latest/download/stable.json"
     ];
 
-    private const string UpdateSigningPublicKey =
-        "BgIAAACkAABSU0ExABAAAAEAAQCVkg9EgvSxaacAGd83JA+KRFf2NN+uRw/+yzf2j8a0jwh2YUQXlseghjR0K1tgS2xlJTkVOm63nUCTWRW3TM88v5itx1kb2DMH03bt25H2DVycoUL3UkCkIMOm7POaHNAL9R7g/KH55QYog63dLX4LvAT9XZeeUabR0Z0SqQl4F/3Y9JSTOWGEOzmkSjDt6Mv4qBKzMXDlQrTNfFcZEP+58nV06027gT8bLqs/rELOcWoQY145U12Sk0CGrAHY1w1kcIbvnWuzNpbriHb+tp3kK4JhibrCchdOjVkLHoIzQQfEgoKRLXGK+R4NX8tBAJeSp1uydWqaC6/nCSMQzR3U2m57nY4dwc11XaV7jC4WMlNMYOoOWU/vL1pXlZk2XhxFLmpQsVkr0RMEnAbdfsyfNhKh4vU0zsdVPDk/OP/h5XSeHIZWzhKrirFra1tvKzulIfdWi3mYi6Ut2K/KpjuZstJKUyTPzBLhiu3PYs1TxanMDcALnqwkeLPug+vDMXQhqSxrEnpsxlJl18sYwcGyZBZNOch6dhZMZ3VzVGsBwl9jv6OLqCv/rPxH7XXT6qZIR3TrUNgTDfgdoaHy4IJbPK+EE350cUsKiVPMzlbGp9REhXufFVH1HmIvm0m+npFdh6au05WCfJPzigmUssH6P4HOARkaesoH8Y3ho73YyQ==";
+    private static readonly string[] UpdateSigningPublicKeys =
+    [
+        // 2.2 and earlier release key. Keep it so 2.2.1 can bridge existing installations.
+        "BgIAAACkAABSU0ExAAwAAAEAAQBN/0stnV9weID7c3sXFwvIW/52uYYM+CZzD0RfWEA8QRXpKi4hy8Qn+PtG9DCoRDO2dBcqSBnQ2DwIU/XBQVe4XHc+KbcBhR1oApNsR5l+vbWlolRGdjA7fEg5AA1fL8rcxBmV5/+GxkiOaqCx1r0BxVgZ8YV+2iCRXoGIJ4+MVI0U++DsJdE98bqzS7A9Gys6Y0teJwK++oy5x6UyJTQPpuIaHda0/k3LiB8Lt40Z4vnJJBhcrvVEV03sqAFWFseBrjn7lVevFPeysmpLVLAw2LgrvHoW6P2anANhjMbcwp6VKWnZtcEtOonB1Qm65kJh72FCeVOIm81Zy67G0M6ZDiAS5TYtV5+mSQHxCFFYvaXVQY1OFnNwwhHHQFRaDlEkdIsexkR4NQhyoPa6Xwe5yJmUwghTiJtTnnBkrqNwY3IhYrlzrrflX6VmRjHH//N9RnWD/udCIP+maqie+SLrqSUY3Sj2vU/D1edo1YoVoVKN4rKNmXNFAmw++4pTAq4=",
+        // Current release key.
+        "BgIAAACkAABSU0ExABAAAAEAAQCVkg9EgvSxaacAGd83JA+KRFf2NN+uRw/+yzf2j8a0jwh2YUQXlseghjR0K1tgS2xlJTkVOm63nUCTWRW3TM88v5itx1kb2DMH03bt25H2DVycoUL3UkCkIMOm7POaHNAL9R7g/KH55QYog63dLX4LvAT9XZeeUabR0Z0SqQl4F/3Y9JSTOWGEOzmkSjDt6Mv4qBKzMXDlQrTNfFcZEP+58nV06027gT8bLqs/rELOcWoQY145U12Sk0CGrAHY1w1kcIbvnWuzNpbriHb+tp3kK4JhibrCchdOjVkLHoIzQQfEgoKRLXGK+R4NX8tBAJeSp1uydWqaC6/nCSMQzR3U2m57nY4dwc11XaV7jC4WMlNMYOoOWU/vL1pXlZk2XhxFLmpQsVkr0RMEnAbdfsyfNhKh4vU0zsdVPDk/OP/h5XSeHIZWzhKrirFra1tvKzulIfdWi3mYi6Ut2K/KpjuZstJKUyTPzBLhiu3PYs1TxanMDcALnqwkeLPug+vDMXQhqSxrEnpsxlJl18sYwcGyZBZNOch6dhZMZ3VzVGsBwl9jv6OLqCv/rPxH7XXT6qZIR3TrUNgTDfgdoaHy4IJbPK+EE350cUsKiVPMzlbGp9REhXufFVH1HmIvm0m+npFdh6au05WCfJPzigmUssH6P4HOARkaesoH8Y3ho73YyQ=="
+    ];
 
     private static readonly HttpClient Client = CreateClient();
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -40,7 +45,6 @@ public sealed class UpdateService
                 return new UpdateCheckResult(false, false, null, null, "今天已经检查过更新");
         }
 
-        UserPreferences.SaveLastUpdateCheckUtc(DateTimeOffset.UtcNow);
         string[] urls = UserPreferences.LoadUpdateBootstrapUrls()
             .Concat(BuiltInBootstrapUrls)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -79,6 +83,7 @@ public sealed class UpdateService
             return new UpdateCheckResult(true, false, null, null, message);
         }
 
+        UserPreferences.SaveLastUpdateCheckUtc(DateTimeOffset.UtcNow);
         bool available = CompareVersions(newestManifest.Version, currentVersion) > 0;
         return new UpdateCheckResult(
             true,
@@ -331,13 +336,28 @@ public sealed class UpdateService
 
     private static bool VerifyPublisherSignature(byte[] hash, byte[] signature)
     {
-        using var rsa = new RSACryptoServiceProvider();
-        rsa.ImportCspBlob(Convert.FromBase64String(UpdateSigningPublicKey));
-        return rsa.VerifyHash(
-            hash,
-            signature,
-            HashAlgorithmName.SHA256,
-            RSASignaturePadding.Pkcs1);
+        foreach (string publicKey in UpdateSigningPublicKeys)
+        {
+            try
+            {
+                using var rsa = new RSACryptoServiceProvider();
+                rsa.ImportCspBlob(Convert.FromBase64String(publicKey));
+                if (rsa.VerifyHash(
+                        hash,
+                        signature,
+                        HashAlgorithmName.SHA256,
+                        RSASignaturePadding.Pkcs1))
+                {
+                    return true;
+                }
+            }
+            catch (CryptographicException)
+            {
+                // Try the next trusted release key.
+            }
+        }
+
+        return false;
     }
 
     internal static string BuildManifestSignaturePayload(UpdateChannelManifest manifest)

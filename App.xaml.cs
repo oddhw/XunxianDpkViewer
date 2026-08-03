@@ -30,6 +30,11 @@ public partial class App : Application
                 Exit();
                 return;
             }
+            if (TryRelaunchWithCanonicalExecutableName(commandLineArgs))
+            {
+                Exit();
+                return;
+            }
             string? verifyManifestArgument = commandLineArgs.FirstOrDefault(argument =>
                 argument.StartsWith("--verify-update-manifest=", StringComparison.OrdinalIgnoreCase));
             if (verifyManifestArgument is not null)
@@ -55,15 +60,18 @@ public partial class App : Application
                 Exit();
                 return;
             }
-            if (TryRelaunchWithCanonicalExecutableName(commandLineArgs))
-            {
-                Exit();
-                return;
-            }
-
             UpdateInstaller.ScheduleCleanup(commandLineArgs);
-            _window = new MainWindow();
-            _window.Activate();
+            var mainWindow = new MainWindow();
+            _window = mainWindow;
+            mainWindow.Activate();
+            if (UpdateInstaller.IsRecoveryRestart(commandLineArgs))
+            {
+                mainWindow.DispatcherQueue.TryEnqueue(async () =>
+                {
+                    await Task.Delay(250);
+                    await mainWindow.ShowUpdateRecoveryNoticeAsync();
+                });
+            }
         }
         catch (Exception exception)
         {
@@ -79,33 +87,29 @@ public partial class App : Application
         if (Path.GetFileName(processPath).Equals(CanonicalExecutableName, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        string launcherFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "XunxianDpkViewer", "launcher");
-        string canonicalPath = Path.Combine(launcherFolder, CanonicalExecutableName);
-
         try
         {
-            Directory.CreateDirectory(launcherFolder);
-            File.Copy(processPath, canonicalPath, overwrite: true);
-        }
-        catch
-        {
-            if (!File.Exists(canonicalPath)) return false;
-        }
+            string canonicalPath = UpdateInstaller.PrepareCanonicalLauncher(processPath);
 
-        var startInfo = new ProcessStartInfo
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = canonicalPath,
+                WorkingDirectory = Directory.GetCurrentDirectory(),
+                UseShellExecute = false
+            };
+            foreach (string argument in commandLineArgs.Skip(1))
+                startInfo.ArgumentList.Add(argument);
+            if (!UpdateInstaller.HasLauncherSourceArgument(commandLineArgs))
+                startInfo.ArgumentList.Add(UpdateInstaller.BuildLauncherSourceArgument(processPath));
+            _ = Process.Start(startInfo) ??
+                throw new InvalidOperationException("无法启动标准名称程序副本。");
+            return true;
+        }
+        catch (Exception exception)
         {
-            FileName = canonicalPath,
-            WorkingDirectory = Directory.GetCurrentDirectory(),
-            UseShellExecute = false
-        };
-        foreach (string argument in commandLineArgs.Skip(1))
-            startInfo.ArgumentList.Add(argument);
-        if (!UpdateInstaller.HasLauncherSourceArgument(commandLineArgs))
-            startInfo.ArgumentList.Add(UpdateInstaller.BuildLauncherSourceArgument(processPath));
-        Process.Start(startInfo);
-        return true;
+            WriteCrashLog(exception);
+            return false;
+        }
     }
 
     private static void WriteCrashLog(Exception exception)

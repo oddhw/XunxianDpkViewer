@@ -23,7 +23,7 @@
                 <TextBlock Text="寻仙 DPK 资源浏览器"
                            Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" FontSize="14" />
                 <Border Padding="7,2" CornerRadius="8" Background="{StaticResource AccentSurfaceBrush}">
-                    <TextBlock Text="v2.1" Foreground="{StaticResource AccentTextBrush}" FontSize="10" />
+                    <TextBlock x:Name="AppVersionBadgeText" Foreground="{StaticResource AccentTextBrush}" FontSize="10" />
                 </Border>
             </StackPanel>
             <TextBlock Grid.Column="2" x:Name="ArchiveSummaryText" Margin="0,0,16,0"
@@ -61,7 +61,7 @@
                 <NavigationViewItem x:Name="GlobalSearchNavigationItem" Content="全局资料" Tag="global" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE721;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="DungeonNavigationItem" Content="副本怪物" Tag="dungeon" Foreground="{StaticResource PrimaryTextBrush}">
+                <NavigationViewItem x:Name="DungeonNavigationItem" Content="副本怪物（停用）" Tag="dungeon" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE7FC;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
@@ -921,6 +921,11 @@
                                     <StackPanel Spacing="4">
                                         <TextBlock Text="副本怪物属性汇总" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="SemiBold" />
                                         <TextBlock x:Name="DungeonSummaryStatusText" Text="从 MB 表自动汇总怪物、头像、战斗属性、隐藏状态和掉落组" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="DungeonWorkInProgressNoticeText"
+                                                   Text="《工作量太庞大了，做不完了 先挖个坑 这里的文件只做参考 不具备实际用途 》"
+                                                   Foreground="{StaticResource AccentTextBrush}"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap" />
                                     </StackPanel>
                                     <Border Grid.Column="1" Padding="10,5" CornerRadius="8" Background="{StaticResource SubtleSurfaceBrush}" VerticalAlignment="Top">
                                         <TextBlock x:Name="DungeonSummaryCountText" Foreground="{StaticResource AccentTextBrush}" FontSize="12" />

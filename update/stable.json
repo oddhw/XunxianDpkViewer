@@ -1,9 +1,9 @@
 {
     "schemaVersion":  1,
     "channel":  "stable",
-    "version":  "2.2.1",
-    "releaseNotes":  "2.2.1修复了一个软件更新相关的bug，抓紧更新，不然之后容易收不到更新提示，更新完随时贴吧反馈问题",
-    "publishedAt":  "2026-08-03T13:20:00+08:00",
+    "version":  "2.2.3",
+    "releaseNotes":  "",
+    "publishedAt":  "2026-08-03T15:31:21+08:00",
     "bootstrapUrls":  [
                           "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
                           "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
@@ -13,13 +13,13 @@
                       ],
     "packages":  [
                      {
-                         "url":  "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.2.1/XunxianDpkViewer.exe",
-                         "sha256":  "E552CEC7F29F9D7AB5704B8D0EB1682697A498BFCB0CA48F5A2CDBB518C43D25",
-                         "signature":  "fYOJKqaC+rhaxZ5PYp2O411QV7qj83ASYVdQIkHWeLZVu72SVSTCXI7uLOz/HE3+1JIqHIlaEn1RkIOsmhHSKfiVMRsAxNig3h0qs/nlvQX3n9MMHL8/l95lvqewHhDU5GQZ9phZFcewrz5GPhGNflFf+rh8ojwDh/nq57kfWHVN4DjPxDX2IIAMCViqXVrfVuViaY+El/d0b+jpwR+DMgrVf8Crk5DVqruSlo/Qa4EmZbqm2WW2oDLXq6WbHZb5UIpoe1iyJrlRu+8Mh8lSecCi7coB00kF6J8vWy+AZc2Cltl3rhTXMMldshn8k5Gut9MgV9OLZXS0Lg3N/3idAkJkw6nPc2uk90Da+nmM2n8j0/lUVC8SFkoC3rx5g9xjgCOnhnH4GltzXQWZ/wzCY28g4mQ7GqweOqu4DkOFNHCdwuoQyCTMDZMQ4H34xhGpmExbgCC+fpYR1k5jj9W5eBhhtvCPcP2HjczqdtNMFeT1IWXi8Fd1PVvaXFF6llutaRPgbPWk3ezYC68LM/ncmLocvM5W0TSo8Q+8FYnq0KlglTcNEdDSOj4OvVgtMdzTfgOsvzAcwwOuxXUaxT6gi4LrPm9jn7yaOfmfOrDtJGNRTZDJeHm00axb0xdVz28b0WtXEDJl+e1nRpjXXYuICuN23fJ2pDpFC/S/cJ4YiIQ=",
-                         "size":  89874567,
+                         "url":  "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.2.3/XunxianDpkViewer.exe",
+                         "sha256":  "61076907C387D861CBCAB782E7640EE6094B8F2A15F3E1DD35CE1404E1EDBC41",
+                         "signature":  "stZPqGslBv8Iv+EM0BsoVGFBFZGLi80x+x0BRu2d7u8w7aaEUlNP+/b26g1ohCEoM7DgVLbaULKZxEQz5jMd2tg/iOzmWefWoRRN0cXuWY2zCODtVJ83L1Sz6WAraNkVrXEHyLml/2gHjOTVlauUON3NXhZXIpMnVkYfGb4tuvYRS1PZ/NM+aD+qAz4h9j/BfsNnDfzCJFgjGXfN07MAs0lWpl1Jqu6wRCI6+DYXXFVIlZSJqzeWeE5mlyhpY061Qv1iSqMHLxayjjeKxQEpRzP5OMWhHwdP0JGMETnxIqrsvSsSiVY9jpUd1CW/zDpIKOk18KdNTofBuaAM9x7IXV++EGWt/8vPr9/SKhB3pEmu2Ph+LAHX3BcuqUTGDjsh/jVK4PI1q5pwjpQT9BhiNxZtmE7XUZxgAIa8vXkHaJYlHsgd4/VRKmw0GGjIv4914r7cUVmwc+/HRBnYd864BosGOP1DW85fuiQI8EzTsJfnNwYiWvJ4SUu/ltTfTT9JPIZJP9GiHKuF6U9LxqUOv/m480NhgRtHqQR4BSelt/XWiWeSdkD67rcpQVLFvemKowbEYa/VIj8tR+jWPXnyUPX6CmeRsjxhPXryRrGQ4iNTf4qQu349yoGKijE51eN9APFvNOim4SM/W/XIq0vqfZgfgpJ2QV3WGsgy71p5xaI=",
+                         "size":  89878197,
                          "priority":  100,
                          "label":  "GitHub Release"
                      }
                  ],
-    "signature":  "d7OHaADmxtipAQzL4b4P3b1/AGT+TwCrCAWDFeuNdJ5KBBEDAaDyXn0LwxAz3ecFPPCHUXZlQcSIenUbXmBvFIPnmESMg0WM/FoDrMXfRWuU5c6U7tZXbIMdyXPDPTxUdJRn+tWPzXqPbyjcBHMg+N5OTJB99l5EHZlF68joHcgpnnDdeSn0/v98g1WzUb/f/qLv51cZRxqOnwF45cTeHX8wGWKFaK+OxAffQY8WsVAZMDYcZqgPXwt+xtsJua6W0G7E1NQFGQitzpNYJaR6pDT0s1in7dnJlqbOVW9kHojX/JombN4rYBHulGkd9eASQtUs8/Oao/dcNCO68SwHrBKKfcGxP6lJ+223fVl/T30uLc4l/0IB1u8miUXQbSUN3IxeePQ6CSwVs/dL+gKYX0RzYHfYAYrqy7ZQYwllilehJdgATpa4/RGPwblhe6tLwp3RpVvQAbqAo1/aAuDAv5BGnuQqnPzMO6Qy5DnlAx2X/LLFQ+RszCFfhnCyUI3oH8e+GOL1GELaoqOqBYeaiic5w1t6mGv5HDtLKl/NaE/Y+9y4inLZeEsOK8DIDFc3OqB7qrvDqlc8PujhtGdOJpN9QBF5TrRVYs8S7e00bhpOosi14UvUWouh4rIy6wp7lZaH9KYA4QIXovs8AL8RPHj2RQ850Xvo+IfSIMkwWOo="
+    "signature":  "qgZXO5QzxCdJtq8BDONtvyujI/+Idc0FqvEud+EVMhiSGVlpj3EE/azaHnh15uriz3XKSd0GoukGUwbiIDDaheMzy5ZvQySG8x1oKcJvbihUaof6pHsljp2a3jS+DIn3NZIHK7vx/W8zE+PU+xol/ANrmVRxRFCukAMVMwgoFSsw9vikPwEXSfSmOclCoYj1K1wyhu6oXQ6eoHCoDIX9LdOiipA8uhhDuGCs+ciEXvCk4EiLRI2mdWdOPTkP+3M48rtP1mNdfmSq0pQA95sOxXOWaVVTBWy85R7VEsvGjBHSlBdTAUBCmab7cgbVnMauP4UGNi+nSJQlQAZqy7nRZEuJUDcXePtqnhOMFFbLh6rqsoZ7udVRrMEVCNXiOSiONRSIyhCHQqSPATyc/q9VCjjn5KrRJYBp/4ce6Mdn8TehIAQPmztPm+bjcctIYultvmgFZ1V/VoJqtwLZV0MV+KJrFmpvvVbFRMHH+DtZsaI/08ZD5dX5ueo9Cqk7cWo6clRfcLAUAzXkcSo64d99QhT3Sn5P9dIW5cGKi2Oz8vBcgmGFYLdCGnwqOAI3aRDdyL2/8p+uv0U0F2xv5WDoKM/CIAN5KY6Dicd7LgRlViChqVRmroKqkEJrps7r5tTNNIKQhaZEkAaTrzX7PylKREfYcRpCDK/AeNBha3AgXqo="
 }

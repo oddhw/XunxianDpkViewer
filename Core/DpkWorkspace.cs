@@ -115,6 +115,13 @@ public sealed class DpkWorkspace : IDisposable
         }
     }
 
+    public ModelAnimationSet? LoadModelAnimationSet(AssetEntry model)
+    {
+        CompositeModelEntry? source =
+            (_modelTextureResolver ??= new ModelTextureResolver(this)).FindAnimationSource(model);
+        return source is null ? null : LoadModelAnimationSet(source);
+    }
+
     public void ExtractTo(AssetEntry asset, string rootFolder)
     {
         string archiveFolder = System.IO.Path.GetFileNameWithoutExtension(asset.ArchivePath);

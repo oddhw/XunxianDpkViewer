@@ -13,6 +13,7 @@ public sealed class ModelTextureResolver
     private readonly DpkWorkspace _workspace;
     private readonly Dictionary<string, IReadOnlyList<ModelTextureBinding>> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlyList<CompositeModelEntry>> _compositeCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CompositeModelEntry?> _animationSourceCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
     private Dictionary<string, AssetEntry>? _assetByReference;
 
@@ -64,6 +65,65 @@ public sealed class ModelTextureResolver
         }
     }
 
+    public CompositeModelEntry? FindAnimationSource(AssetEntry model)
+    {
+        lock (_gate)
+        {
+            if (_animationSourceCache.TryGetValue(model.DisplayPath, out CompositeModelEntry? cached))
+                return cached;
+
+            CompositeModelEntry? result = FindAnimationSourceCore(model);
+            _animationSourceCache[model.DisplayPath] = result;
+            return result;
+        }
+    }
+
+    private CompositeModelEntry? FindAnimationSourceCore(AssetEntry model)
+    {
+        string modelReference = NormalizeReference(
+            $"{System.IO.Path.GetFileNameWithoutExtension(model.ArchiveName)}/{model.Entry.Path}");
+        foreach (AssetEntry config in GetTextureCandidateConfigs(model))
+        {
+            XDocument document;
+            try
+            {
+                string text = DecodeXml(_workspace.Extract(config));
+                if (!TextMayReferenceModel(text, model)) continue;
+                document = XDocument.Parse(text, LoadOptions.None);
+            }
+            catch
+            {
+                continue;
+            }
+
+            bool referencesModel = document.Descendants().Any(element =>
+                element.Name.LocalName.Equals("MeshFile", StringComparison.OrdinalIgnoreCase) &&
+                ReferenceMatches(element.Value, modelReference)) ||
+                document.Descendants()
+                    .Where(element => element.Name.LocalName.Equals("Model", StringComparison.OrdinalIgnoreCase))
+                    .SelectMany(element => element.Attributes())
+                    .Any(attribute => attribute.Name.LocalName.Equals("MeshFile", StringComparison.OrdinalIgnoreCase) &&
+                                      ReferenceMatches(attribute.Value, modelReference));
+            if (!referencesModel) continue;
+
+            (AssetEntry? skeletonAsset, ModelAnimationReference[] animations) =
+                ReadAnimationReferences(document);
+            if (skeletonAsset is null || animations.Length == 0) continue;
+
+            string name = System.IO.Path.GetFileNameWithoutExtension(config.Name);
+            return new CompositeModelEntry(
+                $"{name}（动画来源）",
+                config,
+                new[] { new CompositeModelPart(model, string.Empty, null) })
+            {
+                SkeletonAsset = skeletonAsset,
+                Animations = animations
+            };
+        }
+
+        return null;
+    }
+
     private IReadOnlyList<CompositeModelEntry> FindCompositesCore(string archivePath, string folderPath)
     {
         var result = new List<CompositeModelEntry>();
@@ -83,35 +143,8 @@ public sealed class ModelTextureResolver
                 continue;
             }
 
-            AssetEntry? skeletonAsset = document.Descendants()
-                .Where(element => element.Name.LocalName.Equals("Skeleton", StringComparison.OrdinalIgnoreCase))
-                .Select(element => FindReferencedAsset(element.Value))
-                .FirstOrDefault(asset => asset is not null);
-            ModelAnimationReference[] animations = document.Descendants()
-                .Where(element => element.Name.LocalName.Equals("Animation", StringComparison.OrdinalIgnoreCase))
-                .Select(element =>
-                {
-                    string? fileReference = element.Attributes()
-                        .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("AnimationFile", StringComparison.OrdinalIgnoreCase))
-                        ?.Value;
-                    AssetEntry? asset = string.IsNullOrWhiteSpace(fileReference)
-                        ? null
-                        : FindReferencedAsset(fileReference);
-                    string animationName = element.Attributes()
-                        .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("Name", StringComparison.OrdinalIgnoreCase))
-                        ?.Value ?? System.IO.Path.GetFileNameWithoutExtension(asset?.Name ?? string.Empty);
-                    string? priorityText = element.Attributes()
-                        .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("Priority", StringComparison.OrdinalIgnoreCase))
-                        ?.Value;
-                    int priority = int.TryParse(priorityText, out int parsedPriority) ? parsedPriority : 0;
-                    return asset is null
-                        ? null
-                        : new ModelAnimationReference(animationName, asset, priority);
-                })
-                .Where(reference => reference is not null)
-                .Cast<ModelAnimationReference>()
-                .DistinctBy(reference => reference.Asset.DisplayPath, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            (AssetEntry? skeletonAsset, ModelAnimationReference[] animations) =
+                ReadAnimationReferences(document);
 
             var candidates = new List<CompositePartCandidate>();
             XElement[] materialReferences = document.Descendants()
@@ -169,6 +202,41 @@ public sealed class ModelTextureResolver
             }
         }
         return result.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private (AssetEntry? SkeletonAsset, ModelAnimationReference[] Animations) ReadAnimationReferences(
+        XDocument document)
+    {
+        AssetEntry? skeletonAsset = document.Descendants()
+            .Where(element => element.Name.LocalName.Equals("Skeleton", StringComparison.OrdinalIgnoreCase))
+            .Select(element => FindReferencedAsset(element.Value))
+            .FirstOrDefault(asset => asset is not null);
+        ModelAnimationReference[] animations = document.Descendants()
+            .Where(element => element.Name.LocalName.Equals("Animation", StringComparison.OrdinalIgnoreCase))
+            .Select(element =>
+            {
+                string? fileReference = element.Attributes()
+                    .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("AnimationFile", StringComparison.OrdinalIgnoreCase))
+                    ?.Value;
+                AssetEntry? asset = string.IsNullOrWhiteSpace(fileReference)
+                    ? null
+                    : FindReferencedAsset(fileReference);
+                string animationName = element.Attributes()
+                    .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("Name", StringComparison.OrdinalIgnoreCase))
+                    ?.Value ?? System.IO.Path.GetFileNameWithoutExtension(asset?.Name ?? string.Empty);
+                string? priorityText = element.Attributes()
+                    .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("Priority", StringComparison.OrdinalIgnoreCase))
+                    ?.Value;
+                int priority = int.TryParse(priorityText, out int parsedPriority) ? parsedPriority : 0;
+                return asset is null
+                    ? null
+                    : new ModelAnimationReference(animationName, asset, priority);
+            })
+            .Where(reference => reference is not null)
+            .Cast<ModelAnimationReference>()
+            .DistinctBy(reference => reference.Asset.DisplayPath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return (skeletonAsset, animations);
     }
 
     private IReadOnlyList<ModelTextureBinding> ResolveCore(AssetEntry model)

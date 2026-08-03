@@ -5,7 +5,12 @@
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch">
     <Grid Background="{StaticResource SurfaceAltBrush}" CornerRadius="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
         <Grid x:Name="Surface"
+              Grid.Row="0"
               Background="{StaticResource SurfaceAltBrush}"
               SizeChanged="Surface_SizeChanged"
               PointerPressed="Surface_PointerPressed"
@@ -16,6 +21,7 @@
             <Image x:Name="RasterImage" Stretch="Fill" IsHitTestVisible="False" />
         </Grid>
         <Border HorizontalAlignment="Left"
+                Grid.Row="0"
                 VerticalAlignment="Top"
                 Margin="14"
                 Padding="10,6"
@@ -27,6 +33,7 @@
                        FontSize="12" />
         </Border>
         <StackPanel HorizontalAlignment="Right"
+                    Grid.Row="0"
                     VerticalAlignment="Top"
                     Margin="14"
                     Orientation="Horizontal"
@@ -36,10 +43,10 @@
             <ToggleButton x:Name="WireframeModeButton" Content="线框" Click="WireframeModeButton_Click" />
         </StackPanel>
         <Border x:Name="AnimationPanel"
+                Grid.Row="1"
                 Visibility="Collapsed"
                 HorizontalAlignment="Stretch"
-                VerticalAlignment="Bottom"
-                Margin="14"
+                Margin="14,8,14,14"
                 Padding="10"
                 Background="#E0182334"
                 CornerRadius="8">
@@ -89,8 +96,9 @@
                             VerticalAlignment="Center"
                             Minimum="0"
                             Maximum="1"
+                            StepFrequency="1"
                             ValueChanged="AnimationTimeline_ValueChanged"
-                            ToolTipService.ToolTip="拖动动画时间轴" />
+                            ToolTipService.ToolTip="按帧拖动动画时间轴" />
                     <TextBlock x:Name="AnimationFrameText"
                                Grid.Column="2"
                                Width="72"
@@ -114,6 +122,7 @@
             </Grid>
         </Border>
         <TextBlock x:Name="EmptyText"
+                   Grid.Row="0"
                    Text="选择一个 PMF 模型查看实体预览"
                    Foreground="{StaticResource MutedTextBrush}"
                    HorizontalAlignment="Center"

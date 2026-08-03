@@ -70,6 +70,8 @@ public sealed partial class ModelPreviewControl : UserControl
     private float _animationTime;
     private bool _isAnimationPlaying;
     private bool _isUpdatingTimeline;
+    private bool _isTimelineDragging;
+    private bool _resumeAnimationAfterTimelineDrag;
 
     public ModelPreviewControl()
     {
@@ -79,6 +81,22 @@ public sealed partial class ModelPreviewControl : UserControl
             Interval = TimeSpan.FromMilliseconds(33)
         };
         _animationTimer.Tick += AnimationTimer_Tick;
+        AnimationTimeline.AddHandler(
+            PointerPressedEvent,
+            new PointerEventHandler(AnimationTimeline_PointerPressed),
+            true);
+        AnimationTimeline.AddHandler(
+            PointerReleasedEvent,
+            new PointerEventHandler(AnimationTimeline_PointerReleased),
+            true);
+        AnimationTimeline.AddHandler(
+            PointerCanceledEvent,
+            new PointerEventHandler(AnimationTimeline_PointerCanceled),
+            true);
+        AnimationTimeline.AddHandler(
+            PointerCaptureLostEvent,
+            new PointerEventHandler(AnimationTimeline_PointerCaptureLost),
+            true);
     }
 
     public event EventHandler<AnimationExportRequestedEventArgs>? AnimationExportRequested;
@@ -718,7 +736,7 @@ public sealed partial class ModelPreviewControl : UserControl
             return;
         }
 
-        AnimationTimeline.Maximum = Math.Max(0.001, _currentAnimation.Duration);
+        AnimationTimeline.Maximum = GetMaximumFrameIndex(_currentAnimation);
         UpdateAnimationControls();
         SetAnimationPlaying(true);
         ScheduleRender();
@@ -730,9 +748,41 @@ public sealed partial class ModelPreviewControl : UserControl
     private void AnimationTimeline_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_isUpdatingTimeline || _currentAnimation is null) return;
-        _animationTime = Math.Clamp((float)e.NewValue, 0f, _currentAnimation.Duration);
+        int frameIndex = Math.Clamp(
+            (int)Math.Round(e.NewValue),
+            0,
+            GetMaximumFrameIndex(_currentAnimation));
+        _animationTime = Math.Min(
+            _currentAnimation.Duration,
+            frameIndex / (float)Math.Max(1, _currentAnimation.SampleRate));
         UpdateAnimationControls();
         ScheduleRender();
+    }
+
+    private void AnimationTimeline_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (_isTimelineDragging || _currentAnimation is null) return;
+        _isTimelineDragging = true;
+        _resumeAnimationAfterTimelineDrag = _isAnimationPlaying;
+        SetAnimationPlaying(false);
+    }
+
+    private void AnimationTimeline_PointerReleased(object sender, PointerRoutedEventArgs e) =>
+        CompleteTimelineDrag();
+
+    private void AnimationTimeline_PointerCanceled(object sender, PointerRoutedEventArgs e) =>
+        CompleteTimelineDrag();
+
+    private void AnimationTimeline_PointerCaptureLost(object sender, PointerRoutedEventArgs e) =>
+        CompleteTimelineDrag();
+
+    private void CompleteTimelineDrag()
+    {
+        if (!_isTimelineDragging) return;
+        _isTimelineDragging = false;
+        bool shouldResume = _resumeAnimationAfterTimelineDrag;
+        _resumeAnimationAfterTimelineDrag = false;
+        if (shouldResume) SetAnimationPlaying(true);
     }
 
     private void ExportAnimationButton_Click(object sender, RoutedEventArgs e)
@@ -795,18 +845,22 @@ public sealed partial class ModelPreviewControl : UserControl
         }
         else
         {
-            AnimationTimeline.Maximum = Math.Max(0.001, _currentAnimation.Duration);
-            AnimationTimeline.Value = Math.Clamp(_animationTime, 0f, _currentAnimation.Duration);
+            int maximumFrameIndex = GetMaximumFrameIndex(_currentAnimation);
+            int frameIndex = Math.Clamp(
+                (int)MathF.Floor(_animationTime * Math.Max(1, _currentAnimation.SampleRate) + 0.0001f),
+                0,
+                maximumFrameIndex);
+            AnimationTimeline.Maximum = maximumFrameIndex;
+            AnimationTimeline.Value = frameIndex;
             AnimationTimeText.Text =
                 $"{FormatAnimationTime(_animationTime)} / {FormatAnimationTime(_currentAnimation.Duration)}";
-            int frame = Math.Clamp(
-                (int)MathF.Floor(_animationTime * _currentAnimation.SampleRate) + 1,
-                1,
-                _currentAnimation.FrameCount);
-            AnimationFrameText.Text = $"{frame:N0} / {_currentAnimation.FrameCount:N0} 帧";
+            AnimationFrameText.Text = $"{frameIndex + 1:N0} / {_currentAnimation.FrameCount:N0} 帧";
         }
         _isUpdatingTimeline = false;
     }
+
+    private static int GetMaximumFrameIndex(SkeletalAnimation animation) =>
+        Math.Max(0, animation.FrameCount - 1);
 
     private static string FormatAnimationTime(float seconds)
     {

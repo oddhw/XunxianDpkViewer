@@ -54,7 +54,7 @@ public sealed partial class MainWindow : Window
     private bool _buildingFolderTree;
     private bool _multiSelectMode;
     private bool _settingModelTextureSelection;
-    private bool _checkingForUpdates;
+    private Task<UpdateCheckResult>? _activeUpdateCheckTask;
     private FolderNodeInfo? _selectedFolder;
     private int _previewGeneration;
     private readonly Dictionary<string, string> _mbSearchTextCache = new(StringComparer.OrdinalIgnoreCase);
@@ -210,6 +210,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AppVersionBadgeText.Text = $"v{AppVersion}";
         _audioPlayer = new MediaPlayerElement { AreTransportControlsEnabled = true };
         AudioPlayerHost.Content = _audioPlayer;
         _modelPreview = new ModelPreviewControl();
@@ -3215,16 +3216,36 @@ public sealed partial class MainWindow : Window
             }
             else if (asset.Kind == AssetKind.Model)
             {
-                (PmfMesh mesh, IReadOnlyList<ModelTextureBinding> textures) = await Task.Run(() =>
-                    (PmfParser.Parse(data), _workspace.ResolveModelTextures(asset)));
+                (PmfMesh mesh, IReadOnlyList<ModelTextureBinding> textures, ModelAnimationSet? animationSet) =
+                    await Task.Run(() =>
+                    {
+                        ModelAnimationSet? animations = null;
+                        try
+                        {
+                            animations = _workspace.LoadModelAnimationSet(asset);
+                        }
+                        catch
+                        {
+                            // A malformed optional skeleton or action must not hide the model.
+                        }
+
+                        return (
+                            PmfParser.Parse(data),
+                            _workspace.ResolveModelTextures(asset),
+                            animations);
+                    });
                 if (_selectedAsset != asset || !IsPreviewCurrent(previewGeneration)) return;
                 _modelPreview.SetMesh(mesh);
+                _modelPreview.SetAnimationSet(animationSet);
                 ModelTextureSelector.Visibility = Visibility.Visible;
                 _settingModelTextureSelection = true;
                 ModelTextureComboBox.ItemsSource = textures;
                 ModelTextureComboBox.SelectedIndex = textures.Count > 0 ? 0 : -1;
                 _settingModelTextureSelection = false;
-                SelectedMetadataText.Text = $"PMF v{mesh.Version} · {mesh.Vertices.Count:N0} 顶点 · {mesh.DeclaredTriangleCount:N0} 三角面 · {mesh.UvChannelCount} UV 通道 · {textures.Count:N0} 个关联贴图 · {FormatBytes(data.Length)}";
+                string animationStatus = animationSet is null
+                    ? string.Empty
+                    : $" · {animationSet.Animations.Count:N0} 个骨骼动作";
+                SelectedMetadataText.Text = $"PMF v{mesh.Version} · {mesh.Vertices.Count:N0} 顶点 · {mesh.DeclaredTriangleCount:N0} 三角面 · {mesh.UvChannelCount} UV 通道 · {textures.Count:N0} 个关联贴图{animationStatus} · {FormatBytes(data.Length)}";
                 if (textures.Count > 0) await LoadModelTextureAsync(asset, textures[0]);
             }
             else
@@ -3518,6 +3539,27 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(18, 9, 18, 9)
         };
+        var updateProgressRing = new ProgressRing
+        {
+            Width = 18,
+            Height = 18,
+            IsActive = false,
+            Visibility = Visibility.Collapsed
+        };
+        var updateStatusText = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+        };
+        var updateStatusPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Visibility = Visibility.Collapsed
+        };
+        updateStatusPanel.Children.Add(updateProgressRing);
+        updateStatusPanel.Children.Add(updateStatusText);
         var panel = new StackPanel { Spacing = 14, Width = 620 };
         panel.Children.Add(pathBox);
         panel.Children.Add(new TextBlock
@@ -3547,6 +3589,7 @@ public sealed partial class MainWindow : Window
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
         });
         panel.Children.Add(checkUpdateButton);
+        panel.Children.Add(updateStatusPanel);
 
         var dialog = new ContentDialog
         {
@@ -3563,10 +3606,34 @@ public sealed partial class MainWindow : Window
         };
         autoUpdateToggle.Toggled += (_, _) =>
             UserPreferences.SaveAutoCheckForUpdates(autoUpdateToggle.IsOn);
+        UpdateChannelManifest? pendingUpdate = null;
+        string? pendingManifestUrl = null;
         checkUpdateButton.Click += async (_, _) =>
         {
-            dialog.Hide();
-            await CheckForUpdatesAsync(silent: false);
+            if (pendingUpdate is not null)
+            {
+                checkUpdateButton.IsEnabled = false;
+                dialog.Hide();
+                await Task.Yield();
+                await ShowUpdateDialogAsync(pendingUpdate, pendingManifestUrl);
+                return;
+            }
+
+            UpdateCheckResult? result = await CheckForUpdatesInDialogAsync(
+                checkUpdateButton,
+                updateProgressRing,
+                updateStatusPanel,
+                updateStatusText);
+            if (result?.IsUpdateAvailable == true && result.Manifest is not null)
+            {
+                pendingUpdate = result.Manifest;
+                pendingManifestUrl = result.ManifestUrl;
+                checkUpdateButton.Content = "立即更新";
+            }
+            else
+            {
+                checkUpdateButton.Content = "重新检查";
+            }
         };
         await dialog.ShowAsync();
     }
@@ -3601,7 +3668,29 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(18, 9, 18, 9)
         };
+        var updateProgressRing = new ProgressRing
+        {
+            Width = 18,
+            Height = 18,
+            IsActive = false,
+            Visibility = Visibility.Collapsed
+        };
+        var updateStatusText = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+        };
+        var updateStatusPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Visibility = Visibility.Collapsed
+        };
+        updateStatusPanel.Children.Add(updateProgressRing);
+        updateStatusPanel.Children.Add(updateStatusText);
         panel.Children.Add(checkUpdateButton);
+        panel.Children.Add(updateStatusPanel);
 
         var dialog = new ContentDialog
         {
@@ -3610,25 +3699,107 @@ public sealed partial class MainWindow : Window
             Content = panel,
             CloseButtonText = "关闭"
         };
+        UpdateChannelManifest? pendingUpdate = null;
+        string? pendingManifestUrl = null;
         checkUpdateButton.Click += async (_, _) =>
         {
-            dialog.Hide();
-            await CheckForUpdatesAsync(silent: false);
+            if (pendingUpdate is not null)
+            {
+                checkUpdateButton.IsEnabled = false;
+                dialog.Hide();
+                await Task.Yield();
+                await ShowUpdateDialogAsync(pendingUpdate, pendingManifestUrl);
+                return;
+            }
+
+            UpdateCheckResult? result = await CheckForUpdatesInDialogAsync(
+                checkUpdateButton,
+                updateProgressRing,
+                updateStatusPanel,
+                updateStatusText);
+            if (result?.IsUpdateAvailable == true && result.Manifest is not null)
+            {
+                pendingUpdate = result.Manifest;
+                pendingManifestUrl = result.ManifestUrl;
+                checkUpdateButton.Content = "立即更新";
+            }
+            else
+            {
+                checkUpdateButton.Content = "重新检查";
+            }
         };
         await dialog.ShowAsync();
     }
 
+    private async Task<UpdateCheckResult?> CheckForUpdatesInDialogAsync(
+        Button checkUpdateButton,
+        ProgressRing progressRing,
+        StackPanel statusPanel,
+        TextBlock statusText)
+    {
+        if (!checkUpdateButton.IsEnabled) return null;
+
+        checkUpdateButton.IsEnabled = false;
+        checkUpdateButton.Content = "正在检查…";
+        progressRing.Visibility = Visibility.Visible;
+        progressRing.IsActive = true;
+        statusPanel.Visibility = Visibility.Visible;
+        statusText.Text = "正在连接更新源，请稍候…";
+
+        try
+        {
+            UpdateCheckResult result = await GetOrStartUpdateCheckAsync(force: true);
+            if (result.IsUpdateAvailable && result.Manifest is not null)
+            {
+                statusText.Text = $"发现新版本 v{result.Manifest.Version}，点击“立即更新”继续。";
+            }
+            else if (result.Manifest is not null)
+            {
+                statusText.Text = $"当前已是最新版本（v{AppVersion}）。";
+            }
+            else
+            {
+                statusText.Text = $"检查更新失败：{result.Message ?? "暂时无法获取版本信息，请稍后重试。"}";
+            }
+            return result;
+        }
+        catch (Exception exception)
+        {
+            statusText.Text = $"检查更新失败：{exception.Message}";
+            return null;
+        }
+        finally
+        {
+            progressRing.IsActive = false;
+            progressRing.Visibility = Visibility.Collapsed;
+            checkUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private async Task<UpdateCheckResult> GetOrStartUpdateCheckAsync(bool force)
+    {
+        Task<UpdateCheckResult> checkTask = _activeUpdateCheckTask ??
+            _updateService.CheckAsync(AppVersion, force);
+        _activeUpdateCheckTask ??= checkTask;
+
+        try
+        {
+            return await checkTask;
+        }
+        finally
+        {
+            if (ReferenceEquals(_activeUpdateCheckTask, checkTask))
+                _activeUpdateCheckTask = null;
+        }
+    }
+
     private async Task CheckForUpdatesAsync(bool silent)
     {
-        if (_checkingForUpdates) return;
-        _checkingForUpdates = true;
         if (!silent) SetStatus("正在检查更新…");
 
         try
         {
-            UpdateCheckResult result = await _updateService.CheckAsync(
-                AppVersion,
-                force: !silent);
+            UpdateCheckResult result = await GetOrStartUpdateCheckAsync(force: !silent);
             if (!result.Checked) return;
 
             if (result.IsUpdateAvailable && result.Manifest is not null)
@@ -3647,7 +3818,6 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _checkingForUpdates = false;
             if (!silent) SetStatus("就绪");
         }
     }
@@ -4140,7 +4310,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Font => "字体",
             AssetKind.MbTable => "MB 表",
             AssetKind.GlobalSearch => "全局资料",
-            AssetKind.DungeonSummary => "副本怪物",
+            AssetKind.DungeonSummary => "副本怪物（停用）",
             _ => "配置与其他"
         };
         PageDescriptionText.Text = _currentKind switch

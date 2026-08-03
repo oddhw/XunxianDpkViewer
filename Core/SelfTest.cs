@@ -61,6 +61,11 @@ public static class SelfTest
         CheckCompositeModel(report, root, "cha.dpk", "special/gw_hlnubing_187");
         CheckCompositeModel(report, root, "cha.dpk", "special/zj_tuzinv_042", maximumParts: 64);
         CheckCompositeModel(report, root, "cha.dpk", "special/zj_waiguonan_025", maximumParts: 64);
+        CheckRawModelAnimation(
+            report,
+            root,
+            "cha.dpk",
+            "special/gw_denglongguai_128/mesh/st_001.pmf");
         CheckCompositeObjExport(report, root, "cha.dpk", "special/gw_errenzhuanmao_1692", minimumParts: 3);
         CheckCompleteClientIndex(report, root);
         report.AppendLine("SELF-TEST PASSED");
@@ -156,6 +161,26 @@ public static class SelfTest
         }
 
         report.AppendLine($"{archiveName} 组合 OBJ 导出: {composite.Name}；{parts.Length:N0} 个部件；{compositeTriangles:N0} 三角面");
+    }
+
+    private static void CheckRawModelAnimation(
+        StringBuilder report,
+        string root,
+        string archiveName,
+        string modelPath)
+    {
+        using var workspace = new DpkWorkspace();
+        workspace.OpenSingleArchive(Path.Combine(root, archiveName));
+        AssetEntry model = workspace.Assets.First(asset =>
+            asset.Kind == AssetKind.Model &&
+            asset.Entry.Path.Equals(modelPath, StringComparison.OrdinalIgnoreCase));
+        ModelAnimationSet? animationSet = workspace.LoadModelAnimationSet(model);
+        if (animationSet is null || animationSet.Animations.Count == 0)
+            throw new InvalidDataException($"{modelPath} 没有从同目录 CCT 解析到骨骼动画。");
+
+        report.AppendLine(
+            $"{archiveName} mesh 动画: {model.Name}；{animationSet.Animations.Count:N0} 个动作；" +
+            $"{animationSet.Animations.Sum(animation => animation.FrameCount):N0} 帧");
     }
 
     private static void CheckModelTexture(

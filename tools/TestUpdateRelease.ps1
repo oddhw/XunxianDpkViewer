@@ -9,6 +9,47 @@ param(
 $ErrorActionPreference = "Stop"
 $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $packageFullPath = (Resolve-Path -LiteralPath $PackagePath).Path
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$mainWindowXamlPath = Join-Path $projectRoot "MainWindow.xaml"
+$mainWindowXaml = Get-Content -LiteralPath $mainWindowXamlPath -Raw -Encoding UTF8
+if ($mainWindowXaml -match 'Text\s*=\s*"v\d+(?:\.\d+)+"') {
+    throw "MainWindow.xaml contains a hard-coded version badge. Bind it to the assembly version instead."
+}
+if ($mainWindowXaml -notmatch 'x:Name\s*=\s*"AppVersionBadgeText"') {
+    throw "MainWindow.xaml is missing the runtime version badge element."
+}
+$modelPreviewXamlPath = Join-Path $projectRoot "Controls\ModelPreviewControl.xaml"
+$modelPreviewXaml = Get-Content -LiteralPath $modelPreviewXamlPath -Raw -Encoding UTF8
+if ($modelPreviewXaml -notmatch '(?s)x:Name\s*=\s*"AnimationPanel".{0,300}Grid.Row\s*=\s*"1"') {
+    throw "The animation controls must occupy a separate layout row below the model viewport."
+}
+if ($modelPreviewXaml -notmatch '(?s)x:Name\s*=\s*"AnimationTimeline".{0,300}StepFrequency\s*=\s*"1"') {
+    throw "The animation timeline must move in single-frame steps."
+}
+$modelPreviewCodePath = Join-Path $projectRoot "Controls\ModelPreviewControl.xaml.cs"
+$modelPreviewCode = Get-Content -LiteralPath $modelPreviewCodePath -Raw -Encoding UTF8
+if ($modelPreviewCode -notmatch 'AnimationTimeline_PointerPressed' -or
+    $modelPreviewCode -notmatch '_resumeAnimationAfterTimelineDrag' -or
+    $modelPreviewCode -notmatch 'CompleteTimelineDrag') {
+    throw "Dragging the animation timeline must pause automatic playback until the pointer is released."
+}
+if ($mainWindowXaml -notmatch 'x:Name\s*=\s*"DungeonNavigationItem"' -or
+    $mainWindowXaml -notmatch 'x:Name\s*=\s*"DungeonWorkInProgressNoticeText"') {
+    throw "The disabled dungeon notice is missing."
+}
+$mainWindowCodePath = Join-Path $projectRoot "MainWindow.xaml.cs"
+$mainWindowCode = Get-Content -LiteralPath $mainWindowCodePath -Raw -Encoding UTF8
+if ($mainWindowCode -notmatch '_workspace\.LoadModelAnimationSet\(asset\)') {
+    throw "Raw PMF previews must resolve animation data from their model configuration."
+}
+if ($mainWindowCode -match '(?s)checkUpdateButton\.Click.{0,220}dialog\.Hide\(\);\s*await CheckForUpdatesAsync') {
+    throw "The About/Settings update check must remain visible inside its current dialog."
+}
+if ($mainWindowCode -notmatch 'CheckForUpdatesInDialogAsync' -or
+    $mainWindowCode -notmatch 'checkUpdateButton\.IsEnabled\s*=\s*false' -or
+    $mainWindowCode -notmatch 'GetOrStartUpdateCheckAsync') {
+    throw "The update check dialog must show progress and coalesce repeated requests."
+}
 $manifestObject = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $packageInfo = Get-Item -LiteralPath $packageFullPath
 $packageVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($packageFullPath).FileVersion

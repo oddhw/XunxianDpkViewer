@@ -172,12 +172,14 @@ public sealed class ModelTextureResolver
                 candidates.Add(new CompositePartCandidate(mesh, string.Empty, meshElement.Parent, UsesMaterialReferences: false));
             }
 
-            string name = System.IO.Path.GetFileNameWithoutExtension(config.Name) + "（完整组合）";
+            string baseName = System.IO.Path.GetFileNameWithoutExtension(config.Name);
             CompositePartCandidate[] distinctCandidates = candidates
                 .DistinctBy(part => $"{part.MeshAsset.DisplayPath}|{part.MaterialName}", StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            foreach (CompositeCandidateSet candidateSet in SelectCompositeCandidateSets(distinctCandidates, config))
+            CompositeCandidateSet[] candidateSets = SelectCompositeCandidateSets(distinctCandidates, config).ToArray();
+            for (int candidateSetIndex = 0; candidateSetIndex < candidateSets.Length; candidateSetIndex++)
             {
+                CompositeCandidateSet candidateSet = candidateSets[candidateSetIndex];
                 bool isLabeledVariant = !string.IsNullOrWhiteSpace(candidateSet.Label);
                 if (candidateSet.Candidates.Length < 2 && !isLabeledVariant) continue;
 
@@ -189,15 +191,23 @@ public sealed class ModelTextureResolver
                     .ToArray();
                 if (distinctParts.Length < 2 && !isLabeledVariant) continue;
 
-                string displayName = string.IsNullOrWhiteSpace(candidateSet.Label)
-                    ? name
+                string variantLabel = !string.IsNullOrWhiteSpace(candidateSet.Label)
+                    ? candidateSet.Label
+                    : candidateSets.Length > 1
+                        ? (candidateSetIndex + 1).ToString("000")
+                        : string.Empty;
+                string displayName = string.IsNullOrWhiteSpace(variantLabel)
+                    ? $"{baseName}（自动组合）"
                     : candidateSet.Candidates.Length == 1
-                        ? $"{System.IO.Path.GetFileNameWithoutExtension(config.Name)}（独立模型 {candidateSet.Label}）"
-                        : $"{System.IO.Path.GetFileNameWithoutExtension(config.Name)}（完整组合 {candidateSet.Label}）";
+                        ? $"{baseName}（独立方案 {variantLabel}）"
+                        : $"{baseName}（组合方案 {variantLabel}）";
+                bool forceCharacter = IsCharacterConfig(config.Entry.Path);
                 result.Add(new CompositeModelEntry(displayName, config, distinctParts)
                 {
                     SkeletonAsset = skeletonAsset,
-                    Animations = animations
+                    Animations = animations,
+                    VariantLabel = variantLabel,
+                    Diagnostic = CompositeModelDiagnostics.Analyze(distinctParts, forceCharacter)
                 });
             }
         }

@@ -10,6 +10,35 @@ $ErrorActionPreference = "Stop"
 $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $packageFullPath = (Resolve-Path -LiteralPath $PackagePath).Path
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$applicationIconPath = Join-Path $projectRoot "Assets\Xunxian.ico"
+$applicationIconBytes = [IO.File]::ReadAllBytes($applicationIconPath)
+if ($applicationIconBytes.Length -lt 6 -or
+    [BitConverter]::ToUInt16($applicationIconBytes, 0) -ne 0 -or
+    [BitConverter]::ToUInt16($applicationIconBytes, 2) -ne 1) {
+    throw "Assets/Xunxian.ico is not a valid Windows icon file."
+}
+$applicationIconCount = [BitConverter]::ToUInt16($applicationIconBytes, 4)
+$applicationIconSizes = [Collections.Generic.HashSet[int]]::new()
+for ($index = 0; $index -lt $applicationIconCount; $index++) {
+    $entryOffset = 6 + ($index * 16)
+    if ($entryOffset + 16 -gt $applicationIconBytes.Length) {
+        throw "Assets/Xunxian.ico has a truncated icon directory."
+    }
+    $width = [int]$applicationIconBytes[$entryOffset]
+    $height = [int]$applicationIconBytes[$entryOffset + 1]
+    if ($width -eq 0) { $width = 256 }
+    if ($height -eq 0) { $height = 256 }
+    if ($width -eq $height) {
+        $applicationIconSizes.Add($width) | Out-Null
+    }
+}
+$requiredApplicationIconSizes = @(16, 32, 48, 64, 96, 128, 256)
+$missingApplicationIconSizes = @($requiredApplicationIconSizes | Where-Object {
+    -not $applicationIconSizes.Contains($_)
+})
+if ($missingApplicationIconSizes.Count -gt 0) {
+    throw "Assets/Xunxian.ico is missing desktop icon sizes: $($missingApplicationIconSizes -join ', ')."
+}
 $mainWindowXamlPath = Join-Path $projectRoot "MainWindow.xaml"
 $mainWindowXaml = Get-Content -LiteralPath $mainWindowXamlPath -Raw -Encoding UTF8
 if ($mainWindowXaml -match 'Text\s*=\s*"v\d+(?:\.\d+)+"') {

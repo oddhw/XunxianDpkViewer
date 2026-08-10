@@ -103,7 +103,13 @@ public static class SelfTest
         int texturedParts = composite.Parts.Count(part => part.TextureBinding is not null);
         foreach (CompositeModelPart part in composite.Parts)
             _ = PmfParser.Parse(workspace.Extract(part.MeshAsset));
-        report.AppendLine($"{archiveName} 组合模型: {composite.Name}；{composite.Parts.Count:N0} 个部件；{texturedParts:N0} 个贴图材质");
+        CompositeModelDiagnostic diagnostic = composite.Diagnostic;
+        if (diagnostic.Parts.Count != composite.Parts.Count)
+            throw new InvalidDataException(
+                $"{folderPath} 组合诊断部件数不一致：{diagnostic.Parts.Count:N0} / {composite.Parts.Count:N0}。");
+        report.AppendLine(
+            $"{archiveName} 组合模型: {composite.Name}；{composite.Parts.Count:N0} 个部件；" +
+            $"{texturedParts:N0} 个贴图材质；{diagnostic.StatusText}");
     }
 
     private static void CheckCompositeObjExport(

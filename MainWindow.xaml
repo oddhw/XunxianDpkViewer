@@ -558,6 +558,81 @@
                                     <TextBlock x:Name="SelectedNameText" Text="尚未选择资源" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
                                     <TextBlock x:Name="SelectedPathText" Text="从左侧选择图标、声音或模型" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" MaxHeight="48" />
                                     <TextBlock x:Name="SelectedMetadataText" Foreground="{StaticResource AccentTextBrush}" FontSize="11" TextWrapping="Wrap" />
+                                    <Border x:Name="ModelWorkbenchPanel"
+                                            Visibility="Collapsed"
+                                            Background="{StaticResource SurfaceAltBrush}"
+                                            BorderBrush="{StaticResource AppBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="12"
+                                            Margin="0,4,0,0">
+                                        <Grid RowSpacing="8">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="组合工作台"
+                                                               Foreground="{StaticResource PrimaryTextBrush}"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock x:Name="ModelWorkbenchStatusText"
+                                                               Foreground="{StaticResource AccentTextBrush}"
+                                                               FontSize="11"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <Button x:Name="ResetModelPartsButton"
+                                                        Grid.Column="1"
+                                                        Content="恢复自动组合"
+                                                        VerticalAlignment="Center"
+                                                        Click="ResetModelPartsButton_Click" />
+                                            </Grid>
+                                            <TextBlock Grid.Row="1"
+                                                       Text="取消勾选可隐藏叠加错误的部件；当前方案会保存在本机。"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       FontSize="11" />
+                                            <ListView x:Name="ModelPartList"
+                                                      Grid.Row="2"
+                                                      MaxHeight="180"
+                                                      SelectionMode="None"
+                                                      IsItemClickEnabled="False">
+                                                <ListView.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                                                  Tag="{Binding}"
+                                                                  Click="ModelPartToggle_Click"
+                                                                  HorizontalAlignment="Stretch">
+                                                            <Grid MinHeight="34" ColumnSpacing="12">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="100" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding SlotName}"
+                                                                           Foreground="{StaticResource PrimaryTextBrush}"
+                                                                           VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="1"
+                                                                           Text="{Binding FileName}"
+                                                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="2"
+                                                                           Text="{Binding KindText}"
+                                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                                           FontSize="11"
+                                                                           VerticalAlignment="Center" />
+                                                            </Grid>
+                                                        </CheckBox>
+                                                    </DataTemplate>
+                                                </ListView.ItemTemplate>
+                                            </ListView>
+                                        </Grid>
+                                    </Border>
                                     <Grid x:Name="ModelTextureSelector" Visibility="Collapsed" ColumnSpacing="10" Margin="0,3,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />

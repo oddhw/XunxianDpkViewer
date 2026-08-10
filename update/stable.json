@@ -1,9 +1,9 @@
 {
     "schemaVersion":  1,
     "channel":  "stable",
-    "version":  "2.2.3",
+    "version":  "2.3",
     "releaseNotes":  "",
-    "publishedAt":  "2026-08-03T15:31:21+08:00",
+    "publishedAt":  "2026-08-10T17:53:35+08:00",
     "bootstrapUrls":  [
                           "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
                           "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
@@ -13,13 +13,13 @@
                       ],
     "packages":  [
                      {
-                         "url":  "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.2.3/XunxianDpkViewer.exe",
-                         "sha256":  "61076907C387D861CBCAB782E7640EE6094B8F2A15F3E1DD35CE1404E1EDBC41",
-                         "signature":  "stZPqGslBv8Iv+EM0BsoVGFBFZGLi80x+x0BRu2d7u8w7aaEUlNP+/b26g1ohCEoM7DgVLbaULKZxEQz5jMd2tg/iOzmWefWoRRN0cXuWY2zCODtVJ83L1Sz6WAraNkVrXEHyLml/2gHjOTVlauUON3NXhZXIpMnVkYfGb4tuvYRS1PZ/NM+aD+qAz4h9j/BfsNnDfzCJFgjGXfN07MAs0lWpl1Jqu6wRCI6+DYXXFVIlZSJqzeWeE5mlyhpY061Qv1iSqMHLxayjjeKxQEpRzP5OMWhHwdP0JGMETnxIqrsvSsSiVY9jpUd1CW/zDpIKOk18KdNTofBuaAM9x7IXV++EGWt/8vPr9/SKhB3pEmu2Ph+LAHX3BcuqUTGDjsh/jVK4PI1q5pwjpQT9BhiNxZtmE7XUZxgAIa8vXkHaJYlHsgd4/VRKmw0GGjIv4914r7cUVmwc+/HRBnYd864BosGOP1DW85fuiQI8EzTsJfnNwYiWvJ4SUu/ltTfTT9JPIZJP9GiHKuF6U9LxqUOv/m480NhgRtHqQR4BSelt/XWiWeSdkD67rcpQVLFvemKowbEYa/VIj8tR+jWPXnyUPX6CmeRsjxhPXryRrGQ4iNTf4qQu349yoGKijE51eN9APFvNOim4SM/W/XIq0vqfZgfgpJ2QV3WGsgy71p5xaI=",
-                         "size":  89878197,
+                         "url":  "https://github.com/oddhw/XunxianDpkViewer/releases/download/v2.3/XunxianDpkViewer.exe",
+                         "sha256":  "BB7FAA92F585DFD3956901468A664E7C782609BCAA018AD9A368EE266E3E4F0A",
+                         "signature":  "IULTkauyOf6xWiMGA0L0zbZ9sA2VrpJomphLfylBgjlR70ikhYBihDpBQnvCcAwOyIXfw1dHcYeSRkPqgnVFteCuh2alIYsN1S/WnEZu9Ap5YKYkyAg17gzOZunh4gGnKux3kcWOuAHAQcl/bt1IN8Ve1zNI2IItSf+kMHCSkRk7R0W/yEdhcRNxYz9EbJoTiG3ho600qzutSDYFgKDBzQJjw7AxXT931/kb3QACqEbDrTOtbYpkpqjqrYazexKA95bANtdBoRntnZ9lKKI3/ko+FAPxw14ZqnKq3lXFqoW75fLACZ2e6imuI/w+793QODSQHaKq+VXe3rZMX4/vAYZoSTlXu30X+lqNH2UKRgwzKIdv8Mdbr1Etf7KvHN+gRjDA4n2st4eJ+S/1qSH9cV1Oa9On/PQjGhOJWJhMe0fwUaeq88DuKPJmbGvKCSULKMNrc/jPHq9Y6lDD0yOxo6tD69jaaXaikNQzu7QxRbB9UhZZstEWUsJ5hQXjqkn6hM+QFRVsqRFYlk7BhIzzTkI9dyALvMkBODxLSdQptqisS9sjC+3vHjfn3wkXidrRs2X/b9raZATomPPZU8NVApas1LFSVXhISUhEEnFtpwAmO21pn9sviKNRlfE2n0uV3OAIo+zeCRaTjMVEZPMGfgVmAYw8SsCSvF21pEWgIks=",
+                         "size":  90425981,
                          "priority":  100,
                          "label":  "GitHub Release"
                      }
                  ],
-    "signature":  "qgZXO5QzxCdJtq8BDONtvyujI/+Idc0FqvEud+EVMhiSGVlpj3EE/azaHnh15uriz3XKSd0GoukGUwbiIDDaheMzy5ZvQySG8x1oKcJvbihUaof6pHsljp2a3jS+DIn3NZIHK7vx/W8zE+PU+xol/ANrmVRxRFCukAMVMwgoFSsw9vikPwEXSfSmOclCoYj1K1wyhu6oXQ6eoHCoDIX9LdOiipA8uhhDuGCs+ciEXvCk4EiLRI2mdWdOPTkP+3M48rtP1mNdfmSq0pQA95sOxXOWaVVTBWy85R7VEsvGjBHSlBdTAUBCmab7cgbVnMauP4UGNi+nSJQlQAZqy7nRZEuJUDcXePtqnhOMFFbLh6rqsoZ7udVRrMEVCNXiOSiONRSIyhCHQqSPATyc/q9VCjjn5KrRJYBp/4ce6Mdn8TehIAQPmztPm+bjcctIYultvmgFZ1V/VoJqtwLZV0MV+KJrFmpvvVbFRMHH+DtZsaI/08ZD5dX5ueo9Cqk7cWo6clRfcLAUAzXkcSo64d99QhT3Sn5P9dIW5cGKi2Oz8vBcgmGFYLdCGnwqOAI3aRDdyL2/8p+uv0U0F2xv5WDoKM/CIAN5KY6Dicd7LgRlViChqVRmroKqkEJrps7r5tTNNIKQhaZEkAaTrzX7PylKREfYcRpCDK/AeNBha3AgXqo="
+    "signature":  "dENx/iL6SLQ0lcrv7vO5d0dada3R2yuF0UUsBYMma4peluLAKh2ye/sI0uYAIAc6HHLMvymV0hG71VPdAzw0AgYLLPtZ+yBy/aBNxfMNxh0Al1UoqfZU8Rg1g8YpXU1mFDd1pcHlpTcxRdNCWAQsLGuheJRgan5ZDPMYnDetWIqqo6E+HPSDAY/fKyngbT8+lR9UpOD0XIZVeCc6OFtlo2NfrZ05Rh3vf1h598KnMrGGPPNxhRLSXdaUqAHpFKP5oy6w8SrFd28+sQFGw4Z1nB5U6trQfwT1OR2yl9IZk30Lmp+X8dIyG+F+8NYBkEYth5/7BiDjdwHHMgoARSRfciHIrU/pjJrJijBHGAqbL/yGScc6Kk44zCWjxiXd4JytRNmWdIb0nY7uSjQD5kwsrxUE32CCdJHiNZJcrlTz9lYk0QKd/AyQe7NHExeTCs3MYzQmQH6LGGo0tVTEUnqeFRbVHEQue852KJVw4QBg7ftgKM/P3oh+w3kcBW1C/6TKpUjIcDbDwIxrnS0beSG8hRFr6y1fJSI7I6IHhlmpE2x1Md/s6Bkft1srE8cD2EmaQW/kBqF7TnBTf/owAjxd6CQ82v53m+18qp3ijqlRnGurz92gjF1Fd7T8zAah5AkpCyMrwCdmHDi8nkFpA/nK53RIKCckoWnpqMvEB//DibU="
 }

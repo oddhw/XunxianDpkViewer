@@ -10,6 +10,8 @@ public static class UserPreferences
         public bool AutoCheckForUpdates { get; set; } = true;
         public DateTimeOffset? LastUpdateCheckUtc { get; set; }
         public List<string> UpdateBootstrapUrls { get; set; } = [];
+        public Dictionary<string, List<string>> DisabledCompositeParts { get; set; } =
+            new(StringComparer.OrdinalIgnoreCase);
     }
 
     private static readonly object SyncRoot = new();
@@ -86,6 +88,35 @@ public static class UserPreferences
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(12)
                 .ToList();
+            SaveSettings(settings);
+        }
+    }
+
+    public static IReadOnlySet<string> LoadDisabledCompositeParts(string presetKey)
+    {
+        lock (SyncRoot)
+        {
+            Settings settings = LoadSettings();
+            return settings.DisabledCompositeParts.TryGetValue(presetKey, out List<string>? keys)
+                ? keys.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    public static void SaveDisabledCompositeParts(string presetKey, IEnumerable<string> disabledPartKeys)
+    {
+        lock (SyncRoot)
+        {
+            Settings settings = LoadSettings();
+            List<string> keys = disabledPartKeys
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (keys.Count == 0)
+                settings.DisabledCompositeParts.Remove(presetKey);
+            else
+                settings.DisabledCompositeParts[presetKey] = keys;
             SaveSettings(settings);
         }
     }

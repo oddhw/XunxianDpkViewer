@@ -31,9 +31,11 @@ $packageVersion = $null
 if (-not [Version]::TryParse($packageVersionText, [ref]$packageVersion)) {
     throw "Package file version is invalid: $packageVersionText"
 }
+$manifestBuild = [Math]::Max(0, $manifestVersion.Build)
+$packageBuild = [Math]::Max(0, $packageVersion.Build)
 if ($manifestVersion.Major -ne $packageVersion.Major -or
     $manifestVersion.Minor -ne $packageVersion.Minor -or
-    $manifestVersion.Build -ne $packageVersion.Build) {
+    $manifestBuild -ne $packageBuild) {
     throw "Version mismatch: manifest $manifestVersion, package $packageVersion."
 }
 

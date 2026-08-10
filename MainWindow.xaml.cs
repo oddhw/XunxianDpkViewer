@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
+using System.Reflection;
 using System.Threading;
 using System.Xml.Linq;
 using Microsoft.UI.Windowing;
@@ -24,7 +25,9 @@ namespace XunxianDpkViewer;
 public sealed partial class MainWindow : Window
 {
     private static readonly string AppVersion =
-        typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.0";
+        typeof(MainWindow).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion.Split('+')[0] ?? "1.0";
     private const string AppAuthor = "黑风岭-梵心似火";
     private readonly DpkWorkspace _workspace = new();
     private List<AssetItemViewModel> _items = new();
@@ -40,6 +43,8 @@ public sealed partial class MainWindow : Window
     private AssetKind _currentKind = AssetKind.Image;
     private AssetEntry? _selectedAsset;
     private CompositeModelEntry? _selectedComposite;
+    private List<CompositePartOptionViewModel> _modelPartOptions = new();
+    private bool _updatingModelPartOptions;
     private MbTableViewModel? _currentMbTableView;
     private List<GlobalSearchResultViewModel> _globalSearchResults = new();
     private List<DungeonSummaryViewModel> _dungeonSummaries = new();
@@ -3174,6 +3179,7 @@ public sealed partial class MainWindow : Window
         {
             _selectedAsset = null;
             _selectedComposite = composite;
+            ShowModelWorkbench(composite);
             SelectedNameText.Text = composite.Name;
             SelectedPathText.Text = composite.DisplayPath;
             SelectedMetadataText.Text = $"正在组合 {composite.Parts.Count:N0} 个模型部件及贴图…";
@@ -3192,6 +3198,7 @@ public sealed partial class MainWindow : Window
         if (item.Asset is not AssetEntry asset) return;
 
         _selectedComposite = null;
+        HideModelWorkbench();
         _selectedAsset = asset;
         SelectedNameText.Text = selectedCount > 1 ? $"{item.Name}（已选择 {selectedCount:N0} 项）" : item.Name;
         SelectedPathText.Text = asset.DisplayPath;
@@ -3352,13 +3359,20 @@ public sealed partial class MainWindow : Window
     }
 
     private Task<(ModelRenderPart[] RenderParts, int SkippedParts, ModelAnimationSet? AnimationSet)> LoadCompositeRenderPartsAsync(
-        CompositeModelEntry composite) =>
+        CompositeModelEntry composite,
+        IReadOnlySet<string>? enabledPartKeys = null) =>
         Task.Run(() =>
         {
             var parts = new List<ModelRenderPart>();
             int skipped = 0;
             foreach (CompositeModelPart part in composite.Parts)
             {
+                if (enabledPartKeys is not null &&
+                    !enabledPartKeys.Contains(CompositeModelDiagnostics.GetPartKey(part)))
+                {
+                    continue;
+                }
+
                 try
                 {
                     PmfMesh mesh = PmfParser.Parse(_workspace.Extract(part.MeshAsset));
@@ -3402,8 +3416,15 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            IReadOnlySet<string>? enabledPartKeys = ReferenceEquals(_selectedComposite, composite) &&
+                                                       _modelPartOptions.Count > 0
+                ? _modelPartOptions
+                    .Where(option => option.IsEnabled)
+                    .Select(option => option.Key)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
             (ModelRenderPart[] renderParts, int skippedParts, ModelAnimationSet? animationSet) =
-                await LoadCompositeRenderPartsAsync(composite);
+                await LoadCompositeRenderPartsAsync(composite, enabledPartKeys);
             if (_selectedComposite != composite || !IsPreviewCurrent(previewGeneration)) return;
             if (renderParts.Length == 0)
             {
@@ -3420,7 +3441,8 @@ public sealed partial class MainWindow : Window
             string animationStatus = animationSet is null
                 ? string.Empty
                 : $" · {animationSet.Animations.Count:N0} 个骨骼动作";
-            SelectedMetadataText.Text = $"完整组合 · {renderParts.Length:N0} 个 PMF 部件 · {vertices:N0} 顶点 · {triangles:N0} 三角面 · {texturedParts:N0} 个部件已加载贴图{animationStatus}{skippedStatus}";
+            SelectedMetadataText.Text = $"当前方案 · {renderParts.Length:N0} 个 PMF 部件 · {vertices:N0} 顶点 · {triangles:N0} 三角面 · {texturedParts:N0} 个部件已加载贴图{animationStatus}{skippedStatus}";
+            UpdateModelWorkbenchStatus();
         }
         catch (Exception ex)
         {
@@ -3773,6 +3795,133 @@ public sealed partial class MainWindow : Window
             progressRing.IsActive = false;
             progressRing.Visibility = Visibility.Collapsed;
             checkUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private void ShowModelWorkbench(CompositeModelEntry composite)
+    {
+        IReadOnlySet<string> disabledPartKeys = UserPreferences.LoadDisabledCompositeParts(
+            CompositeModelDiagnostics.GetPresetKey(composite));
+        CompositeModelPartDescriptor[] descriptors = composite.Parts
+            .Select(CompositeModelDiagnostics.Describe)
+            .ToArray();
+
+        _updatingModelPartOptions = true;
+        try
+        {
+            _modelPartOptions = composite.Parts
+                .Select((part, index) => new CompositePartOptionViewModel(
+                    part,
+                    descriptors[index],
+                    !disabledPartKeys.Contains(descriptors[index].Key)))
+                .ToList();
+            if (_modelPartOptions.Count > 0 && _modelPartOptions.All(option => !option.IsEnabled))
+            {
+                foreach (CompositePartOptionViewModel option in _modelPartOptions)
+                    option.IsEnabled = true;
+            }
+
+            ModelPartList.ItemsSource = _modelPartOptions;
+            ModelWorkbenchPanel.Visibility = Visibility.Visible;
+            UpdateModelWorkbenchStatus();
+        }
+        finally
+        {
+            _updatingModelPartOptions = false;
+        }
+    }
+
+    private void HideModelWorkbench()
+    {
+        _modelPartOptions = new List<CompositePartOptionViewModel>();
+        ModelPartList.ItemsSource = null;
+        ModelWorkbenchStatusText.Text = string.Empty;
+        ModelWorkbenchPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void UpdateModelWorkbenchStatus()
+    {
+        if (_selectedComposite is not CompositeModelEntry composite || _modelPartOptions.Count == 0)
+        {
+            ModelWorkbenchStatusText.Text = string.Empty;
+            return;
+        }
+
+        CompositeModelPart[] enabledParts = _modelPartOptions
+            .Where(option => option.IsEnabled)
+            .Select(option => option.Part)
+            .ToArray();
+        CompositeModelDiagnostic diagnostic = CompositeModelDiagnostics.Analyze(
+            enabledParts,
+            composite.Diagnostic.IsCharacter);
+        string variant = string.IsNullOrWhiteSpace(composite.VariantLabel)
+            ? "自动组合"
+            : $"方案 {composite.VariantLabel}";
+        ModelWorkbenchStatusText.Text =
+            $"{variant} · 已显示 {enabledParts.Length:N0}/{_modelPartOptions.Count:N0} 个部件 · {diagnostic.StatusText}";
+    }
+
+    private async void ModelPartToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updatingModelPartOptions || _selectedComposite is not CompositeModelEntry composite)
+            return;
+
+        if (_modelPartOptions.All(option => !option.IsEnabled) &&
+            sender is CheckBox { Tag: CompositePartOptionViewModel option })
+        {
+            _updatingModelPartOptions = true;
+            option.IsEnabled = true;
+            _updatingModelPartOptions = false;
+            return;
+        }
+
+        UserPreferences.SaveDisabledCompositeParts(
+            CompositeModelDiagnostics.GetPresetKey(composite),
+            _modelPartOptions.Where(option => !option.IsEnabled).Select(option => option.Key));
+        UpdateModelWorkbenchStatus();
+
+        int previewGeneration = ++_previewGeneration;
+        ShowPreviewLoading(previewGeneration, "正在更新组合部件");
+        try
+        {
+            await PreviewCompositeModelAsync(composite, previewGeneration);
+        }
+        finally
+        {
+            HidePreviewLoading(previewGeneration);
+        }
+    }
+
+    private async void ResetModelPartsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComposite is not CompositeModelEntry composite)
+            return;
+
+        _updatingModelPartOptions = true;
+        try
+        {
+            foreach (CompositePartOptionViewModel option in _modelPartOptions)
+                option.IsEnabled = true;
+        }
+        finally
+        {
+            _updatingModelPartOptions = false;
+        }
+
+        UserPreferences.SaveDisabledCompositeParts(
+            CompositeModelDiagnostics.GetPresetKey(composite),
+            Array.Empty<string>());
+        UpdateModelWorkbenchStatus();
+
+        int previewGeneration = ++_previewGeneration;
+        ShowPreviewLoading(previewGeneration, "正在恢复自动组合");
+        try
+        {
+            await PreviewCompositeModelAsync(composite, previewGeneration);
+        }
+        finally
+        {
+            HidePreviewLoading(previewGeneration);
         }
     }
 
@@ -4519,6 +4668,7 @@ public sealed partial class MainWindow : Window
                     ? "可多选模型后批量导出"
                     : "可多选资源后批量导出";
         SelectedMetadataText.Text = string.Empty;
+        HideModelWorkbench();
         PreviewImage.Source = null;
         MbTablePreviewPanel.Visibility = Visibility.Collapsed;
         MbTableSummaryText.Text = string.Empty;

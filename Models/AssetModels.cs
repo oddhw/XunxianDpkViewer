@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Microsoft.UI.Xaml.Media;
+using XunxianDpkViewer.Core;
 
 namespace XunxianDpkViewer.Models;
 
@@ -59,7 +60,7 @@ public sealed class AssetItemViewModel : INotifyPropertyChanged
     {
         Composite = composite;
         _name = composite.Name;
-        _subtitle = $"完整组合 · {composite.Parts.Count:N0} 个 PMF 部件";
+        _subtitle = composite.Diagnostic.StatusText;
     }
 
     public AssetEntry? Asset { get; }
@@ -503,8 +504,51 @@ public sealed record CompositeModelEntry(
 
     public AssetEntry? SkeletonAsset { get; init; }
 
+    public string VariantLabel { get; init; } = string.Empty;
+
+    public CompositeModelDiagnostic Diagnostic { get; init; } =
+        new(false, Array.Empty<CompositeModelPartDescriptor>(), Array.Empty<string>(), Array.Empty<string>(), 0, 0);
+
     public IReadOnlyList<ModelAnimationReference> Animations { get; init; } =
         Array.Empty<ModelAnimationReference>();
+}
+
+public sealed class CompositePartOptionViewModel : INotifyPropertyChanged
+{
+    private bool _isEnabled;
+
+    public CompositePartOptionViewModel(
+        CompositeModelPart part,
+        CompositeModelPartDescriptor descriptor,
+        bool isEnabled)
+    {
+        Part = part;
+        Key = descriptor.Key;
+        SlotName = descriptor.SlotName;
+        FileName = descriptor.FileName;
+        IsOptional = descriptor.IsOptional;
+        _isEnabled = isEnabled;
+    }
+
+    public CompositeModelPart Part { get; }
+    public string Key { get; }
+    public string SlotName { get; }
+    public string FileName { get; }
+    public bool IsOptional { get; }
+    public string KindText => IsOptional ? "可选" : "主体";
+
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set
+        {
+            if (_isEnabled == value) return;
+            _isEnabled = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public sealed record ModelRenderPart(

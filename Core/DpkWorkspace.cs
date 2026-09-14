@@ -158,6 +158,7 @@ public sealed class DpkWorkspace : IDisposable
         if (ImageExtensions.Contains(extension)) return AssetKind.Image;
         if (SoundExtensions.Contains(extension)) return AssetKind.Sound;
         if (extension.Equals(".pmf", StringComparison.OrdinalIgnoreCase)) return AssetKind.Model;
+        if (extension.Equals(".gfx", StringComparison.OrdinalIgnoreCase)) return AssetKind.Effect;
         if (FontExtensions.Contains(extension)) return AssetKind.Font;
         return AssetKind.Other;
     }

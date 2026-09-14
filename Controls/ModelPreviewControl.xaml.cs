@@ -68,10 +68,10 @@ public sealed partial class ModelPreviewControl : UserControl
     private SkeletalAnimation? _currentAnimation;
     private DateTimeOffset _lastAnimationTick;
     private float _animationTime;
+    private float _animationPlaybackSpeed = 1f;
     private bool _isAnimationPlaying;
     private bool _isUpdatingTimeline;
     private bool _isTimelineDragging;
-    private bool _resumeAnimationAfterTimelineDrag;
 
     public ModelPreviewControl()
     {
@@ -81,6 +81,8 @@ public sealed partial class ModelPreviewControl : UserControl
             Interval = TimeSpan.FromMilliseconds(33)
         };
         _animationTimer.Tick += AnimationTimer_Tick;
+        AnimationSpeedSelector.ItemsSource = new[] { "0.25x", "0.5x", "1x", "1.5x", "2x" };
+        AnimationSpeedSelector.SelectedIndex = 2;
         AnimationTimeline.AddHandler(
             PointerPressedEvent,
             new PointerEventHandler(AnimationTimeline_PointerPressed),
@@ -763,7 +765,6 @@ public sealed partial class ModelPreviewControl : UserControl
     {
         if (_isTimelineDragging || _currentAnimation is null) return;
         _isTimelineDragging = true;
-        _resumeAnimationAfterTimelineDrag = _isAnimationPlaying;
         SetAnimationPlaying(false);
     }
 
@@ -780,9 +781,45 @@ public sealed partial class ModelPreviewControl : UserControl
     {
         if (!_isTimelineDragging) return;
         _isTimelineDragging = false;
-        bool shouldResume = _resumeAnimationAfterTimelineDrag;
-        _resumeAnimationAfterTimelineDrag = false;
-        if (shouldResume) SetAnimationPlaying(true);
+    }
+
+    private void PreviousFrameButton_Click(object sender, RoutedEventArgs e) => StepAnimationFrame(-1);
+
+    private void NextFrameButton_Click(object sender, RoutedEventArgs e) => StepAnimationFrame(1);
+
+    private void StepAnimationFrame(int offset)
+    {
+        if (_currentAnimation is null) return;
+        SetAnimationPlaying(false);
+        int currentFrame = Math.Clamp(
+            (int)MathF.Round(_animationTime * Math.Max(1, _currentAnimation.SampleRate)),
+            0,
+            GetMaximumFrameIndex(_currentAnimation));
+        SetAnimationFrame(Math.Clamp(currentFrame + offset, 0, GetMaximumFrameIndex(_currentAnimation)));
+    }
+
+    private void SetAnimationFrame(int frameIndex)
+    {
+        if (_currentAnimation is null) return;
+        frameIndex = Math.Clamp(frameIndex, 0, GetMaximumFrameIndex(_currentAnimation));
+        _animationTime = Math.Min(
+            _currentAnimation.Duration,
+            frameIndex / (float)Math.Max(1, _currentAnimation.SampleRate));
+        UpdateAnimationControls();
+        ScheduleRender();
+    }
+
+    private void AnimationSpeedSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _animationPlaybackSpeed = AnimationSpeedSelector.SelectedIndex switch
+        {
+            0 => 0.25f,
+            1 => 0.5f,
+            3 => 1.5f,
+            4 => 2f,
+            _ => 1f
+        };
+        if (_isAnimationPlaying) _lastAnimationTick = DateTimeOffset.UtcNow;
     }
 
     private void ExportAnimationButton_Click(object sender, RoutedEventArgs e)
@@ -810,7 +847,23 @@ public sealed partial class ModelPreviewControl : UserControl
         }
         else
         {
-            _animationTime = (_animationTime + elapsed) % duration;
+            float nextTime = _animationTime + elapsed * _animationPlaybackSpeed;
+            if (nextTime >= duration)
+            {
+                if (AnimationLoopButton.IsChecked == true)
+                {
+                    _animationTime = nextTime % duration;
+                }
+                else
+                {
+                    _animationTime = duration;
+                    SetAnimationPlaying(false);
+                }
+            }
+            else
+            {
+                _animationTime = nextTime;
+            }
         }
 
         UpdateAnimationControls();
@@ -871,6 +924,35 @@ public sealed partial class ModelPreviewControl : UserControl
     private void TextureModeButton_Click(object sender, RoutedEventArgs e) => SetMode(ModelRenderMode.Textured);
     private void SolidModeButton_Click(object sender, RoutedEventArgs e) => SetMode(ModelRenderMode.Solid);
     private void WireframeModeButton_Click(object sender, RoutedEventArgs e) => SetMode(ModelRenderMode.Wireframe);
+
+    private void CameraPreset_Click(object sender, RoutedEventArgs e)
+    {
+        string preset = (sender as FrameworkElement)?.Tag?.ToString() ?? "front";
+        _zoom = DefaultZoom;
+        switch (preset)
+        {
+            case "back":
+                _yaw = DefaultYaw + MathF.PI;
+                _pitch = DefaultPitch;
+                break;
+            case "left":
+                _yaw = DefaultYaw - MathF.PI / 2f;
+                _pitch = DefaultPitch;
+                break;
+            case "right":
+                _yaw = DefaultYaw + MathF.PI / 2f;
+                _pitch = DefaultPitch;
+                break;
+            case "top":
+                _yaw = DefaultYaw;
+                _pitch = -1.42f;
+                break;
+            default:
+                ResetCamera();
+                break;
+        }
+        ScheduleRender();
+    }
     private void Surface_SizeChanged(object sender, SizeChangedEventArgs e) => ScheduleRender();
 
     private void Surface_PointerPressed(object sender, PointerRoutedEventArgs e)

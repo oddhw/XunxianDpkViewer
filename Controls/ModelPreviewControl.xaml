@@ -22,13 +22,13 @@
         </Grid>
         <Border HorizontalAlignment="Left"
                 Grid.Row="0"
+                Visibility="Collapsed"
                 VerticalAlignment="Top"
                 Margin="14"
                 Padding="10,6"
                 Background="#D0182334"
                 CornerRadius="8">
             <TextBlock x:Name="HintText"
-                       Text="实体预览 · 拖拽旋转 · 滚轮缩放"
                        Foreground="{StaticResource SecondaryTextBrush}"
                        FontSize="12" />
         </Border>
@@ -38,6 +38,26 @@
                     Margin="14"
                     Orientation="Horizontal"
                     Spacing="6">
+            <Button AutomationProperties.Name="选择模型视角"
+                    >
+                <Button.Content>
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <FontIcon Glyph="&#xE7B3;" FontSize="14" />
+                        <TextBlock Text="视角" />
+                    </StackPanel>
+                </Button.Content>
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuFlyoutItem Text="正面" Tag="front" Click="CameraPreset_Click" />
+                        <MenuFlyoutItem Text="背面" Tag="back" Click="CameraPreset_Click" />
+                        <MenuFlyoutItem Text="左侧" Tag="left" Click="CameraPreset_Click" />
+                        <MenuFlyoutItem Text="右侧" Tag="right" Click="CameraPreset_Click" />
+                        <MenuFlyoutItem Text="俯视" Tag="top" Click="CameraPreset_Click" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Text="重置视角与缩放" Tag="reset" Click="CameraPreset_Click" />
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
             <ToggleButton x:Name="TextureModeButton" Content="贴图" IsEnabled="False" Click="TextureModeButton_Click" />
             <ToggleButton x:Name="SolidModeButton" Content="实体" IsChecked="True" Click="SolidModeButton_Click" />
             <ToggleButton x:Name="WireframeModeButton" Content="线框" Click="WireframeModeButton_Click" />
@@ -57,7 +77,11 @@
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button x:Name="PlayPauseButton"
@@ -67,17 +91,44 @@
                         Height="36"
                         Padding="0"
                         Click="PlayPauseButton_Click"
-                        ToolTipService.ToolTip="播放或暂停骨骼动画">
+                        >
                     <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE769;" FontSize="16" />
                 </Button>
+                <Button Grid.Column="1"
+                        Width="36"
+                        Height="36"
+                        Padding="0"
+                        Click="PreviousFrameButton_Click">
+                    <FontIcon Glyph="&#xE892;" FontSize="14" />
+                </Button>
+                <Button Grid.Column="2"
+                        Width="36"
+                        Height="36"
+                        Padding="0"
+                        Click="NextFrameButton_Click">
+                    <FontIcon Glyph="&#xE893;" FontSize="14" />
+                </Button>
                 <ComboBox x:Name="AnimationSelector"
-                           Grid.Column="1"
+                           Grid.Column="3"
                            Height="36"
                            MinWidth="100"
-                           SelectionChanged="AnimationSelector_SelectionChanged"
-                           ToolTipService.ToolTip="选择模型动作" />
+                           SelectionChanged="AnimationSelector_SelectionChanged" />
+                <ComboBox x:Name="AnimationSpeedSelector"
+                          Grid.Column="4"
+                          Width="82"
+                          Height="36"
+                          SelectionChanged="AnimationSpeedSelector_SelectionChanged" />
+                <ToggleButton x:Name="AnimationLoopButton"
+                              Grid.Column="5"
+                              Height="36"
+                              IsChecked="True">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <FontIcon Glyph="&#xE8EE;" FontSize="14" />
+                        <TextBlock Text="循环" />
+                    </StackPanel>
+                </ToggleButton>
                 <Grid Grid.Row="1"
-                      Grid.ColumnSpan="3"
+                      Grid.ColumnSpan="7"
                       ColumnSpacing="10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -97,8 +148,7 @@
                             Minimum="0"
                             Maximum="1"
                             StepFrequency="1"
-                            ValueChanged="AnimationTimeline_ValueChanged"
-                            ToolTipService.ToolTip="按帧拖动动画时间轴" />
+                            ValueChanged="AnimationTimeline_ValueChanged" />
                     <TextBlock x:Name="AnimationFrameText"
                                Grid.Column="2"
                                Width="72"
@@ -110,10 +160,9 @@
                 <Button x:Name="ExportAnimationButton"
                         AutomationProperties.AutomationId="AnimationExportButton"
                         AutomationProperties.Name="导出当前 BVH 骨骼动画"
-                        Grid.Column="2"
+                        Grid.Column="6"
                         Height="36"
-                        Click="ExportAnimationButton_Click"
-                        ToolTipService.ToolTip="导出当前骨骼动画">
+                        Click="ExportAnimationButton_Click">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE74E;" FontSize="14" />
                         <TextBlock Text="导出 BVH" />
@@ -123,7 +172,6 @@
         </Border>
         <TextBlock x:Name="EmptyText"
                    Grid.Row="0"
-                   Text="选择一个 PMF 模型查看实体预览"
                    Foreground="{StaticResource MutedTextBrush}"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center" />

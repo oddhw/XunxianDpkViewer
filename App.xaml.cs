@@ -56,7 +56,13 @@ public partial class App : Application
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "XunxianDpkViewer");
                 Directory.CreateDirectory(folder);
-                File.WriteAllText(Path.Combine(folder, "self-test.log"), SelfTest.Run());
+                string logPath = Path.Combine(folder, "self-test.log");
+                File.WriteAllText(logPath, $"SELF-TEST STARTED {DateTimeOffset.Now:O}{Environment.NewLine}");
+                string report = SelfTest.Run(step =>
+                    File.AppendAllText(
+                        logPath,
+                        $"[{DateTimeOffset.Now:HH:mm:ss}] {step}{Environment.NewLine}"));
+                File.WriteAllText(logPath, report);
                 Exit();
                 return;
             }

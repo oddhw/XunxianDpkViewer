@@ -58,7 +58,8 @@ if ($modelPreviewXaml -notmatch '(?s)x:Name\s*=\s*"AnimationTimeline".{0,300}Ste
 $modelPreviewCodePath = Join-Path $projectRoot "Controls\ModelPreviewControl.xaml.cs"
 $modelPreviewCode = Get-Content -LiteralPath $modelPreviewCodePath -Raw -Encoding UTF8
 if ($modelPreviewCode -notmatch 'AnimationTimeline_PointerPressed' -or
-    $modelPreviewCode -notmatch '_resumeAnimationAfterTimelineDrag' -or
+    $modelPreviewCode -notmatch '_isTimelineDragging' -or
+    $modelPreviewCode -notmatch 'SetAnimationPlaying\(false\)' -or
     $modelPreviewCode -notmatch 'CompleteTimelineDrag') {
     throw "Dragging the animation timeline must pause automatic playback until the pointer is released."
 }

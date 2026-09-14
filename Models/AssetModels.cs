@@ -10,6 +10,7 @@ public enum AssetKind
     Image,
     Sound,
     Model,
+    Effect,
     Font,
     MbTable,
     GlobalSearch,
@@ -29,6 +30,13 @@ public sealed record AssetEntry(
     public string ArchiveName => System.IO.Path.GetFileName(ArchivePath);
     public string DisplayPath => $"{ArchiveName}  /  {Entry.Path}";
 }
+
+public sealed record EffectUsageInfo(
+    string Category,
+    string Title,
+    string Detail,
+    string SourcePath,
+    AssetEntry? Asset);
 
 public sealed record FolderNodeInfo(
     string Name,
@@ -73,6 +81,7 @@ public sealed class AssetItemViewModel : INotifyPropertyChanged
     {
         AssetKind.Sound => "\uE8D6",
         AssetKind.Model => "\uE809",
+        AssetKind.Effect => "\uE7FC",
         AssetKind.Font => "\uE8D2",
         AssetKind.MbTable => "\uE8A5",
         AssetKind.Other => "\uE8A5",
@@ -300,11 +309,15 @@ public sealed record GlobalSearchResourceSectionViewModel(
         var used = new HashSet<GlobalSearchLinkViewModel>();
         var sections = new List<GlobalSearchResourceSectionViewModel>();
 
+        foreach (GlobalSearchLinkViewModel sourceLink in links.Where(IsSourceLink))
+        {
+            used.Add(sourceLink);
+        }
+
         AddSection(sections, used, "展示图标", "没有找到图标。", links.Where(IsIconLink));
         AddSection(sections, used, "模型 / 外观", "没有找到模型配置。", links.Where(IsModelLink));
         AddSection(sections, used, "贴图 / 图片", "没有找到贴图资源。", links.Where(IsTextureLink));
         AddSection(sections, used, "物品 / 部件", "没有找到关联物品。", links.Where(IsItemLink));
-        AddSection(sections, used, "资料来源", "没有来源记录。", links.Where(IsSourceLink));
         AddSection(sections, used, "其他线索", "没有其他线索。", links.Where(link => !used.Contains(link)));
 
         return sections;

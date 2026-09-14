@@ -36,9 +36,13 @@ public sealed partial class MainWindow : Window
     private readonly MediaPlayerElement _audioPlayer;
     private readonly ModelPreviewControl _modelPreview;
     private readonly ModelPreviewControl _globalModelPreview;
+    private readonly EffectPreviewControl _effectPreview;
     private readonly UpdateService _updateService = new();
+    private GameInfoWindow? _gameInfoWindow;
     private readonly SemaphoreSlim _globalSearchLock = new(1, 1);
     private CancellationTokenSource? _globalSearchCancellation;
+    private CancellationTokenSource? _effectUsageIndexCancellation;
+    private Task<EffectUsageGraph>? _effectUsageGraphTask;
     private List<AssetEntry> _filteredAssets = new();
     private AssetKind _currentKind = AssetKind.Image;
     private AssetEntry? _selectedAsset;
@@ -85,6 +89,14 @@ public sealed partial class MainWindow : Window
     {
         ".txt", ".xml", ".cct", ".cmf", ".cfg", ".ini", ".lua", ".json"
     };
+
+    private static readonly Regex EffectResourceReferenceRegex = new(
+        @"(?i)(?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_.-]+\.(?:gfx|cct|cmf|pmf|psf|paf|txt|xml|cfg|ini|lua|json)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex EffectIdentifierReferenceRegex = new(
+        @"(?<![A-Za-z0-9_.-])[A-Za-z_][A-Za-z0-9_.-]{2,}(?![A-Za-z0-9_.-])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static IReadOnlySet<string> Ids(params string[] ids) =>
         new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
@@ -222,6 +234,8 @@ public sealed partial class MainWindow : Window
         ModelPreviewHost.Content = _modelPreview;
         _globalModelPreview = new ModelPreviewControl();
         GlobalSearchModelPreviewHost.Content = _globalModelPreview;
+        _effectPreview = new EffectPreviewControl();
+        EffectPreviewHost.Content = _effectPreview;
         _modelPreview.AnimationExportRequested += ModelPreview_AnimationExportRequested;
         _globalModelPreview.AnimationExportRequested += ModelPreview_AnimationExportRequested;
         ExtendsContentIntoTitleBar = false;
@@ -245,6 +259,9 @@ public sealed partial class MainWindow : Window
 
         Closed += (_, _) =>
         {
+            _gameInfoWindow?.Close();
+            _effectUsageIndexCancellation?.Cancel();
+            _effectUsageIndexCancellation?.Dispose();
             _mediaPlayer.Dispose();
             _workspace.Dispose();
         };
@@ -323,6 +340,10 @@ public sealed partial class MainWindow : Window
 
     private void AfterWorkspaceLoaded()
     {
+        _effectUsageIndexCancellation?.Cancel();
+        _effectUsageIndexCancellation?.Dispose();
+        _effectUsageIndexCancellation = null;
+        _effectUsageGraphTask = null;
         _mbSearchTextCache.Clear();
         _mbRowsByPath.Clear();
         _legendEquipAtbs = null;
@@ -349,11 +370,12 @@ public sealed partial class MainWindow : Window
         int images = _workspace.Assets.Count(asset => asset.Kind == AssetKind.Image);
         int sounds = _workspace.Assets.Count(asset => asset.Kind == AssetKind.Sound);
         int models = _workspace.Assets.Count(asset => asset.Kind == AssetKind.Model);
+        int effects = _workspace.Assets.Count(asset => asset.Kind == AssetKind.Effect);
         int fonts = _workspace.Assets.Count(asset => asset.Kind == AssetKind.Font);
         int mbTables = _workspace.Assets.Count(asset => asset.Kind == AssetKind.MbTable);
         int others = _workspace.Assets.Count(asset => asset.Kind == AssetKind.Other);
         string mbSummary = mbTables > 0 ? $" · {mbTables:N0} MB表" : string.Empty;
-        ArchiveSummaryText.Text = $"{_workspace.ArchivePaths.Count} 个包 · {images:N0} 图像 · {sounds:N0} 声音 · {models:N0} 模型 · {fonts:N0} 字体{mbSummary} · {others:N0} 其他";
+        ArchiveSummaryText.Text = $"{_workspace.ArchivePaths.Count} 个包 · {images:N0} 图像 · {sounds:N0} 声音 · {models:N0} 模型 · {effects:N0} 特效 · {fonts:N0} 字体{mbSummary} · {others:N0} 其他";
         BatchExportButton.IsEnabled = true;
         BuildFolderTree();
         ApplyFilter();
@@ -381,6 +403,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Image => "gui.dpk",
             AssetKind.Sound => "sound.dpk",
             AssetKind.Model => "obj.dpk",
+            AssetKind.Effect => "gfx.dpk",
             AssetKind.Font => "font.dpk",
             AssetKind.MbTable => "mb.dpk",
             AssetKind.Other => "gfx.dpk",
@@ -453,7 +476,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            CurrentFolderText.Text = "当前分类没有资源目录";
+            CurrentFolderText.Text = string.Empty;
         }
         _buildingFolderTree = false;
     }
@@ -1733,27 +1756,16 @@ public sealed partial class MainWindow : Window
             if (links.Count >= 80) break;
         }
 
-        foreach (string table in sourceTables)
-            AddGlobalSyntheticLink(links, seen, $"source:{table}", "资料来源", System.IO.Path.GetFileName(table), table, "原始资料位置");
-
         return links;
     }
 
     private static string BuildGlobalKnowledgeRawText(IReadOnlyList<GlobalSearchResultViewModel> rows)
     {
-        var builder = new StringBuilder();
-        builder.AppendLine("资料卡来源：");
-        foreach (GlobalSearchResultViewModel row in rows.Take(120))
-            builder.AppendLine($"- {row.Title} | {row.Subtitle}");
-        builder.AppendLine();
-        builder.AppendLine("原始命中文本：");
-        foreach (GlobalSearchResultViewModel row in rows.Take(120))
-        {
-            builder.AppendLine($"[{row.Subtitle}]");
-            builder.AppendLine(row.RawText);
-        }
-
-        return builder.ToString().Trim();
+        return string.Join(
+            Environment.NewLine,
+            rows.Select(row => row.RawText)
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Distinct(StringComparer.Ordinal));
     }
 
     private static string ExtractGlobalSetFamilyName(string title)
@@ -2050,23 +2062,12 @@ public sealed partial class MainWindow : Window
 
     private static string CreateGlobalAssetSummary(AssetEntry asset)
     {
-        ResourceExplanation explanation = ResourceExplanationService.Explain(asset);
-        var builder = new StringBuilder();
-        AppendGlobalValue(builder, "类型", explanation.FriendlyName);
-        AppendGlobalValue(builder, "用途", explanation.Purpose);
-        AppendGlobalValue(builder, "读取场景", explanation.UsedWhen);
-        AppendGlobalValue(builder, "路径", asset.DisplayPath);
-        return builder.ToString().Trim();
+        return asset.DisplayPath;
     }
 
     private static string CreateGlobalTextAssetSummary(AssetEntry asset, string snippet)
     {
-        ResourceExplanation explanation = ResourceExplanationService.Explain(asset);
-        var builder = new StringBuilder();
-        AppendGlobalValue(builder, "类型", explanation.FriendlyName);
-        AppendGlobalValue(builder, "用途", explanation.Purpose);
-        AppendGlobalValue(builder, "命中片段", snippet);
-        return builder.ToString().Trim();
+        return snippet;
     }
 
     private static string GetGlobalMbCategory(string normalizedPath, string tableName)
@@ -2611,7 +2612,7 @@ public sealed partial class MainWindow : Window
     }
 
     private static bool IsGlobalResourceLinkCandidate(AssetEntry asset) =>
-        asset.Kind is AssetKind.Image or AssetKind.Model ||
+        asset.Kind is AssetKind.Image or AssetKind.Model or AssetKind.Effect ||
         asset.Extension is ".cct" or ".cmf" or ".psf" or ".paf" or ".xml" or ".txt";
 
     private static int ScoreGlobalLinkedAsset(AssetEntry asset, string token)
@@ -2755,6 +2756,7 @@ public sealed partial class MainWindow : Window
         AssetKind.Image => "图像",
         AssetKind.Sound => "声音",
         AssetKind.Model => "模型",
+        AssetKind.Effect => "技能特效",
         AssetKind.Font => "字体",
         AssetKind.MbTable => "MB 表",
         AssetKind.DungeonSummary => "副本",
@@ -2885,11 +2887,11 @@ public sealed partial class MainWindow : Window
             GlobalSearchSkillsPanel.Visibility = Visibility.Collapsed;
             GlobalSearchSkillsList.ItemsSource = null;
             GlobalSearchPreviewImage.Source = null;
-            GlobalSearchDetailTitleText.Text = "选择一条结果";
+            GlobalSearchDetailTitleText.Text = string.Empty;
             GlobalSearchDetailMetaText.Text = string.Empty;
             GlobalSearchDetailSourceText.Text = string.Empty;
             GlobalSearchResourceSectionList.ItemsSource = null;
-            GlobalSearchNoLinksText.Visibility = Visibility.Visible;
+            GlobalSearchNoLinksText.Visibility = Visibility.Collapsed;
             GlobalSearchRawTextBox.Text = string.Empty;
             return;
         }
@@ -2905,7 +2907,7 @@ public sealed partial class MainWindow : Window
         GlobalSearchSkillsList.ItemsSource = result.Skills;
         GlobalSearchSkillsPanel.Visibility = result.Skills.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         GlobalSearchResourceSectionList.ItemsSource = result.ResourceSections;
-        GlobalSearchNoLinksText.Visibility = result.Links.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        GlobalSearchNoLinksText.Visibility = Visibility.Collapsed;
         GlobalSearchRawTextBox.Text = result.RawText;
         _ = PreviewGlobalSearchModelAsync(result, ++_globalDetailPreviewGeneration);
     }
@@ -3004,6 +3006,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Image => "image",
             AssetKind.Sound => "sound",
             AssetKind.Model => "model",
+            AssetKind.Effect => "effect",
             AssetKind.Font => "font",
             AssetKind.MbTable => "mb",
             AssetKind.GlobalSearch => "global",
@@ -3203,8 +3206,11 @@ public sealed partial class MainWindow : Window
         SelectedNameText.Text = selectedCount > 1 ? $"{item.Name}（已选择 {selectedCount:N0} 项）" : item.Name;
         SelectedPathText.Text = asset.DisplayPath;
         SelectedMetadataText.Text = "正在读取…";
-        if (asset.Kind == AssetKind.Model)
-            ShowPreviewLoading(previewGeneration, $"正在加载模型：{asset.Name}");
+        if (asset.Kind is AssetKind.Model or AssetKind.Effect)
+        {
+            string loadingLabel = asset.Kind == AssetKind.Effect ? "\u6b63\u5728\u52a0\u8f7d\u6280\u80fd\u7279\u6548" : "\u6b63\u5728\u52a0\u8f7d\u6a21\u578b";
+            ShowPreviewLoading(previewGeneration, $"{loadingLabel}：{asset.Name}");
+        }
 
         try
         {
@@ -3255,6 +3261,17 @@ public sealed partial class MainWindow : Window
                 SelectedMetadataText.Text = $"PMF v{mesh.Version} · {mesh.Vertices.Count:N0} 顶点 · {mesh.DeclaredTriangleCount:N0} 三角面 · {mesh.UvChannelCount} UV 通道 · {textures.Count:N0} 个关联贴图{animationStatus} · {FormatBytes(data.Length)}";
                 if (textures.Count > 0) await LoadModelTextureAsync(asset, textures[0]);
             }
+            else if (asset.Kind == AssetKind.Effect)
+            {
+                GfxEffectPreviewData effect = await Task.Run(() => GfxEffectLoader.Load(_workspace, asset, data));
+                if (_selectedAsset != asset || !IsPreviewCurrent(previewGeneration)) return;
+                _effectPreview.SetEffect(effect);
+                _effectPreview.SetUsageLoading();
+                _ = LoadEffectUsageAsync(asset, previewGeneration);
+                ModelTextureSelector.Visibility = Visibility.Collapsed;
+                ModelTextureComboBox.ItemsSource = null;
+                SelectedMetadataText.Text = $"\u6280\u80fd\u7279\u6548 · {effect.Layers.Count:N0} \u4e2a\u56fe\u5c42 · {effect.TextureCount:N0} \u5f20\u8d34\u56fe · {effect.MeshReferences.Count:N0} \u4e2a\u7f51\u683c\u5f15\u7528 · {effect.FrameCount:N0} \u5e27";
+            }
             else
             {
                 ResourceExplanation explanation = ResourceExplanationService.Explain(asset);
@@ -3303,10 +3320,650 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            if (asset.Kind == AssetKind.Model)
+            if (asset.Kind is AssetKind.Model or AssetKind.Effect)
                 HidePreviewLoading(previewGeneration);
         }
     }
+
+    private async Task LoadEffectUsageAsync(AssetEntry effectAsset, int previewGeneration)
+    {
+        try
+        {
+            if (_effectUsageGraphTask is null)
+            {
+                _effectUsageIndexCancellation?.Cancel();
+                _effectUsageIndexCancellation?.Dispose();
+                _effectUsageIndexCancellation = new CancellationTokenSource();
+                CancellationToken cancellationToken = _effectUsageIndexCancellation.Token;
+                _effectUsageGraphTask = Task.Run(
+                    () => BuildEffectUsageGraph(cancellationToken),
+                    cancellationToken);
+            }
+
+            EffectUsageGraph graph = await _effectUsageGraphTask;
+            CancellationToken usageCancellation =
+                _effectUsageIndexCancellation?.Token ?? CancellationToken.None;
+            IReadOnlyList<EffectUsageInfo> usages = await Task.Run(
+                () => ResolveEffectUsage(effectAsset, graph, usageCancellation),
+                usageCancellation);
+            if (_selectedAsset != effectAsset || !IsPreviewCurrent(previewGeneration))
+                return;
+
+            _effectPreview.SetUsage(usages);
+        }
+        catch (OperationCanceledException)
+        {
+            // Loading a new workspace cancels the old reference index.
+        }
+        catch (Exception ex)
+        {
+            _effectUsageGraphTask = null;
+            if (_selectedAsset == effectAsset && IsPreviewCurrent(previewGeneration))
+            {
+                _effectPreview.SetUsageError(
+                    $"\u53cd\u67e5\u5931\u8d25\uff1a{ex.Message}");
+            }
+        }
+    }
+
+    private EffectUsageGraph BuildEffectUsageGraph(
+        CancellationToken cancellationToken)
+    {
+        AssetEntry[] assets = _workspace.Assets.ToArray();
+        AssetEntry[] referenceAssets = assets
+            .Where(IsEffectReferenceAsset)
+            .ToArray();
+
+        var aliasOwners = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (AssetEntry asset in referenceAssets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string assetKey = GetEffectAssetKey(asset);
+            foreach (string alias in GetEffectReferenceAliases(asset))
+            {
+                if (!aliasOwners.TryGetValue(alias, out HashSet<string>? owners))
+                {
+                    owners = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    aliasOwners[alias] = owners;
+                }
+                owners.Add(assetKey);
+            }
+        }
+
+        Dictionary<string, string> aliasToAsset = aliasOwners
+            .Where(pair => pair.Value.Count == 1)
+            .ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.First(),
+                StringComparer.OrdinalIgnoreCase);
+
+        HashSet<string> knownSkillIds = CollectKnownEffectIds(
+            assets,
+            path => path.StartsWith("skill/skill_data", StringComparison.Ordinal),
+            1,
+            cancellationToken);
+        HashSet<string> knownStateIds = CollectKnownEffectIds(
+            assets,
+            path => path.StartsWith("skill/state_data", StringComparison.Ordinal),
+            1,
+            cancellationToken);
+        HashSet<string> knownStateGroupIds = CollectKnownEffectIds(
+            assets,
+            path => path.StartsWith("skill/state_group", StringComparison.Ordinal),
+            1,
+            cancellationToken);
+
+        var documents = new List<EffectReferenceDocument>();
+        foreach (AssetEntry asset in assets.Where(asset =>
+                     asset.Kind == AssetKind.MbTable || IsGlobalSearchTextAsset(asset)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!TryGetGlobalSearchText(asset, out string text) || string.IsNullOrWhiteSpace(text))
+                continue;
+
+            if (asset.Kind == AssetKind.MbTable)
+            {
+                AddEffectMbReferenceDocuments(
+                    documents,
+                    asset,
+                    text,
+                    aliasToAsset,
+                    knownSkillIds,
+                    knownStateIds,
+                    knownStateGroupIds,
+                    cancellationToken);
+            }
+            else
+            {
+                HashSet<string> references = ExtractEffectReferenceKeys(text, aliasToAsset);
+                if (references.Count == 0)
+                    continue;
+
+                string category = ClassifyEffectUsage(asset, text);
+                documents.Add(new EffectReferenceDocument(
+                    asset,
+                    category,
+                    CreateEffectUsageTitle(asset, null),
+                    asset.DisplayPath,
+                    references,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        GetEffectAssetKey(asset)
+                    }));
+            }
+        }
+
+        var reverseReferences = new Dictionary<string, List<EffectReferenceDocument>>(
+            StringComparer.OrdinalIgnoreCase);
+        var documentsByOwnKey = new Dictionary<string, List<EffectReferenceDocument>>(
+            StringComparer.OrdinalIgnoreCase);
+        var keyLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (EffectReferenceDocument document in documents)
+        {
+            foreach (string reference in document.References)
+            {
+                if (!reverseReferences.TryGetValue(reference, out List<EffectReferenceDocument>? referring))
+                {
+                    referring = new List<EffectReferenceDocument>();
+                    reverseReferences[reference] = referring;
+                }
+                referring.Add(document);
+            }
+
+            foreach (string ownKey in document.OwnKeys)
+            {
+                if (!documentsByOwnKey.TryGetValue(ownKey, out List<EffectReferenceDocument>? owned))
+                {
+                    owned = new List<EffectReferenceDocument>();
+                    documentsByOwnKey[ownKey] = owned;
+                }
+                owned.Add(document);
+                if (IsVisibleEffectUsageCategory(document.Category) &&
+                    !keyLabels.ContainsKey(ownKey))
+                {
+                    keyLabels[ownKey] = document.Title;
+                }
+            }
+        }
+
+        return new EffectUsageGraph(reverseReferences, documentsByOwnKey, keyLabels);
+    }
+
+    private static IReadOnlyList<EffectUsageInfo> ResolveEffectUsage(
+        AssetEntry effect,
+        EffectUsageGraph graph,
+        CancellationToken cancellationToken)
+    {
+        string effectKey = GetEffectAssetKey(effect);
+        var queue = new Queue<(string Key, int Depth, IReadOnlyList<string> Chain)>();
+        var visitedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { effectKey };
+        var visitedDocuments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usages = new List<(EffectUsageInfo Usage, int Depth)>();
+        queue.Enqueue((effectKey, 1, Array.Empty<string>()));
+
+        while (queue.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            (string key, int depth, IReadOnlyList<string> chain) = queue.Dequeue();
+            if (depth > 7)
+                continue;
+
+            IEnumerable<EffectReferenceDocument> candidates =
+                (graph.ReverseReferences.TryGetValue(key, out List<EffectReferenceDocument>? referring)
+                    ? referring
+                    : Enumerable.Empty<EffectReferenceDocument>())
+                .Concat(graph.DocumentsByOwnKey.TryGetValue(key, out List<EffectReferenceDocument>? owned)
+                    ? owned
+                    : Enumerable.Empty<EffectReferenceDocument>());
+
+            foreach (EffectReferenceDocument document in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string documentKey = $"{document.SourcePath}|{document.Title}";
+                if (!visitedDocuments.Add(documentKey))
+                    continue;
+
+                bool isVisibleUsage = IsVisibleEffectUsageCategory(document.Category);
+                IReadOnlyList<string> nextChain = isVisibleUsage
+                    ? AppendEffectUsageChain(chain, document.Title)
+                    : chain;
+                if (isVisibleUsage)
+                {
+                    string detail = CreateEffectUsageDetail(document.Category, nextChain);
+                    usages.Add((new EffectUsageInfo(
+                        document.Category,
+                        document.Title,
+                        detail,
+                        document.SourcePath,
+                        document.Asset), depth));
+                }
+
+                if (depth >= 7)
+                    continue;
+                foreach (string ownKey in document.OwnKeys)
+                {
+                    if (visitedKeys.Add(ownKey))
+                    {
+                        IReadOnlyList<string> ownChain = graph.KeyLabels.TryGetValue(
+                            ownKey,
+                            out string? label)
+                            ? AppendEffectUsageChain(nextChain, label)
+                            : nextChain;
+                        queue.Enqueue((ownKey, depth + 1, ownChain));
+                    }
+                }
+            }
+        }
+
+        return usages
+            .GroupBy(item => $"{item.Usage.Category}|{item.Usage.Title}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(item => item.Depth).First())
+            .OrderBy(item => EffectUsageCategoryRank(item.Usage.Category))
+            .ThenBy(item => item.Depth)
+            .ThenBy(item => item.Usage.Title, StringComparer.OrdinalIgnoreCase)
+            .Select(item => item.Usage)
+            .Take(80)
+            .ToArray();
+    }
+
+    private HashSet<string> CollectKnownEffectIds(
+        IEnumerable<AssetEntry> assets,
+        Func<string, bool> pathPredicate,
+        int idColumn,
+        CancellationToken cancellationToken)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (AssetEntry asset in assets.Where(asset => asset.Kind == AssetKind.MbTable))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string path = NormalizeEffectReference(asset.Entry.Path);
+            if (!pathPredicate(path) ||
+                !TryGetGlobalSearchText(asset, out string text) ||
+                string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            string[] lines = SplitTextLines(text);
+            if (lines.Length == 0)
+                continue;
+            char delimiter = ChooseMbTableDelimiter(lines);
+            foreach (string line in lines)
+            {
+                string id = GetCell(SplitMbTableLine(line, delimiter), idColumn).Trim();
+                if (IsCompactNumericCell(id))
+                    ids.Add(id);
+            }
+        }
+        return ids;
+    }
+
+    private void AddEffectMbReferenceDocuments(
+        ICollection<EffectReferenceDocument> documents,
+        AssetEntry asset,
+        string text,
+        IReadOnlyDictionary<string, string> aliasToAsset,
+        IReadOnlySet<string> knownSkillIds,
+        IReadOnlySet<string> knownStateIds,
+        IReadOnlySet<string> knownStateGroupIds,
+        CancellationToken cancellationToken)
+    {
+        string[] lines = SplitTextLines(text);
+        if (lines.Length == 0)
+            return;
+
+        char delimiter = ChooseMbTableDelimiter(lines);
+        string normalizedPath = NormalizeEffectReference(asset.Entry.Path);
+        string tableName = Path.GetFileNameWithoutExtension(asset.Name);
+        for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string line = lines[lineIndex];
+            string[] row = SplitMbTableLine(line, delimiter);
+            var references = ExtractEffectReferenceKeys(line, aliasToAsset);
+            var ownKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            AddKnownEffectMbRelations(
+                normalizedPath,
+                row,
+                references,
+                ownKeys,
+                knownSkillIds,
+                knownStateIds,
+                knownStateGroupIds);
+            if (references.Count == 0 && ownKeys.Count == 0)
+                continue;
+
+            string category = ClassifyEffectMbUsage(normalizedPath, row);
+            string rowTitle = CreateEffectMbUsageTitle(normalizedPath, tableName, row, lineIndex + 1);
+            documents.Add(new EffectReferenceDocument(
+                asset,
+                category,
+                CreateEffectUsageTitle(asset, rowTitle),
+                $"{asset.DisplayPath} \u00b7 \u7b2c {lineIndex + 1:N0} \u884c",
+                references,
+                ownKeys));
+        }
+    }
+
+    private static void AddKnownEffectMbRelations(
+        string normalizedPath,
+        IReadOnlyList<string> row,
+        ISet<string> references,
+        ISet<string> ownKeys,
+        IReadOnlySet<string> knownSkillIds,
+        IReadOnlySet<string> knownStateIds,
+        IReadOnlySet<string> knownStateGroupIds)
+    {
+        if (normalizedPath.StartsWith("help_bank/bank_cha_copyscn", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(references, "roleid", GetCell(row, 1));
+            return;
+        }
+
+        if (normalizedPath.StartsWith("skill/methodunit_data", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(ownKeys, "methodunitid", GetCell(row, 1));
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/cha_skill_unit", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(references, "methodunitid", GetCell(row, 0));
+            AddKnownWeightedEffectKeys(ownKeys, "skillid", GetCell(row, 3), knownSkillIds);
+            return;
+        }
+
+        if (normalizedPath.StartsWith("skill/skill_data", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(ownKeys, "skillid", GetCell(row, 1));
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/cha_skill_choose", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(ownKeys, "skillchooseid", GetCell(row, 1));
+            foreach (string cell in row.Skip(2))
+                AddKnownWeightedEffectKeys(references, "skillid", cell, knownSkillIds);
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/cha_pic", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(ownKeys, "picid", GetCell(row, 1));
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/cha_list", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(ownKeys, "roleid", GetCell(row, 1));
+            AddSyntheticEffectKey(references, "picid", GetCell(row, 3));
+            AddSyntheticEffectKey(references, "skillchooseid", GetCell(row, 5));
+            AddKnownEffectKeys(references, "stateid", GetCell(row, 13), knownStateIds);
+            AddKnownEffectKeys(references, "stategroupid", GetCell(row, 13), knownStateGroupIds);
+            return;
+        }
+
+        if (normalizedPath.StartsWith("object/ride", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_list", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_list_group", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(references, "roleid", GetCell(row, 2));
+            return;
+        }
+
+        if (normalizedPath.StartsWith("skill/state_data", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(ownKeys, "stateid", GetCell(row, 1));
+            return;
+        }
+
+        if (normalizedPath.StartsWith("skill/state_group", StringComparison.Ordinal))
+        {
+            AddSyntheticEffectKey(ownKeys, "stategroupid", GetCell(row, 1));
+            AddKnownEffectKeys(references, "stateid", GetCell(row, 3), knownStateIds);
+        }
+    }
+
+    private static void AddKnownWeightedEffectKeys(
+        ISet<string> keys,
+        string type,
+        string value,
+        IReadOnlySet<string> knownIds)
+    {
+        MatchCollection matches = Regex.Matches(value, @"(?<!\d)\d+(?!\d)");
+        if (matches.Count == 0)
+            return;
+
+        if (value.Contains('*') && matches.Count >= 2)
+        {
+            for (int index = 1; index < matches.Count; index += 2)
+            {
+                string id = matches[index].Value;
+                if (knownIds.Contains(id))
+                    keys.Add($"@{type}:{id}");
+            }
+            return;
+        }
+
+        foreach (Match match in matches)
+        {
+            if (knownIds.Contains(match.Value))
+                keys.Add($"@{type}:{match.Value}");
+        }
+    }
+
+    private static void AddKnownEffectKeys(
+        ISet<string> keys,
+        string type,
+        string value,
+        IReadOnlySet<string> knownIds)
+    {
+        foreach (Match match in Regex.Matches(value, @"(?<!\d)\d+(?!\d)"))
+        {
+            if (knownIds.Contains(match.Value))
+                keys.Add($"@{type}:{match.Value}");
+        }
+    }
+
+    private static void AddSyntheticEffectKey(ISet<string> keys, string type, string value)
+    {
+        string normalized = value.Trim();
+        if (IsCompactNumericCell(normalized))
+            keys.Add($"@{type}:{normalized}");
+    }
+
+    private static bool IsEffectReferenceAsset(AssetEntry asset)
+    {
+        return asset.Kind == AssetKind.Effect || asset.Extension is
+            ".cct" or ".cmf" or ".pmf" or ".psf" or ".paf" or
+            ".txt" or ".xml" or ".cfg" or ".ini" or ".lua" or ".json";
+    }
+
+    private static IEnumerable<string> GetEffectReferenceAliases(AssetEntry asset)
+    {
+        string path = NormalizeEffectReference(asset.Entry.Path);
+        string fileName = NormalizeEffectReference(asset.Name);
+        string pathWithoutExtension = NormalizeEffectReference(
+            Path.ChangeExtension(asset.Entry.Path, null) ?? asset.Entry.Path);
+        string stem = NormalizeEffectReference(Path.GetFileNameWithoutExtension(asset.Name));
+
+        foreach (string value in new[] { path, fileName, pathWithoutExtension, stem })
+        {
+            if (value.Length >= 3)
+                yield return value;
+        }
+    }
+
+    private static HashSet<string> ExtractEffectReferenceKeys(
+        string text,
+        IReadOnlyDictionary<string, string> aliasToAsset)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in EffectResourceReferenceRegex.Matches(text))
+        {
+            AddEffectAliasReference(result, aliasToAsset, match.Value);
+            AddEffectAliasReference(result, aliasToAsset, Path.GetFileName(match.Value));
+            AddEffectAliasReference(result, aliasToAsset, Path.GetFileNameWithoutExtension(match.Value));
+        }
+
+        foreach (Match match in EffectIdentifierReferenceRegex.Matches(text))
+            AddEffectAliasReference(result, aliasToAsset, match.Value);
+        return result;
+    }
+
+    private static void AddEffectAliasReference(
+        ISet<string> result,
+        IReadOnlyDictionary<string, string> aliasToAsset,
+        string candidate)
+    {
+        string normalized = NormalizeEffectReference(candidate);
+        if (normalized.Length >= 3 && aliasToAsset.TryGetValue(normalized, out string? assetKey))
+            result.Add(assetKey);
+    }
+
+    private static string GetEffectAssetKey(AssetEntry asset) =>
+        $"{NormalizeEffectReference(asset.ArchiveName)}|{NormalizeEffectReference(asset.Entry.Path)}";
+
+    private static string NormalizeEffectReference(string value)
+    {
+        string normalized = value.Trim().Trim('"', '\'', '(', ')', '[', ']', '{', '}', ',', ';')
+            .Replace('\\', '/')
+            .ToLowerInvariant();
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized[2..];
+        while (normalized.Contains("//", StringComparison.Ordinal))
+            normalized = normalized.Replace("//", "/", StringComparison.Ordinal);
+        return normalized;
+    }
+
+    private static string ClassifyEffectUsage(AssetEntry asset, string text)
+    {
+        string path = NormalizeEffectReference(asset.Entry.Path);
+        string archive = NormalizeEffectReference(asset.ArchiveName);
+        string lowerText = text.ToLowerInvariant();
+        if (path.Contains("skill", StringComparison.Ordinal) || path.Contains("spell", StringComparison.Ordinal) ||
+            path.Contains("state", StringComparison.Ordinal) || path.Contains("buff", StringComparison.Ordinal))
+        {
+            return "\u914d\u7f6e\u5f15\u7528";
+        }
+        if (path.Contains("hook", StringComparison.Ordinal) || path.Contains("socket", StringComparison.Ordinal) ||
+            path.Contains("attach", StringComparison.Ordinal) || lowerText.Contains("hook", StringComparison.Ordinal) ||
+            lowerText.Contains("socket", StringComparison.Ordinal) || lowerText.Contains("attach", StringComparison.Ordinal))
+            return "\u89e6\u53d1/\u6302\u70b9";
+        if (archive.Equals("scn.dpk", StringComparison.Ordinal) || path.StartsWith("scn/", StringComparison.Ordinal) ||
+            path.Contains("scene", StringComparison.Ordinal) || path.Contains("/map", StringComparison.Ordinal))
+            return "\u51fa\u73b0\u4f4d\u7f6e";
+        if (path.StartsWith("object/cha", StringComparison.Ordinal) ||
+            path.StartsWith("object/ride", StringComparison.Ordinal) ||
+            path.StartsWith("pet/", StringComparison.Ordinal))
+            return "\u4f7f\u7528\u8005";
+        if (asset.Extension is ".cct" or ".cmf" or ".pmf" or ".psf" or ".paf")
+            return "\u6a21\u578b/\u7269\u4ef6";
+        return "\u914d\u7f6e\u5f15\u7528";
+    }
+
+    private static string ClassifyEffectMbUsage(string normalizedPath, IReadOnlyList<string> row)
+    {
+        if (normalizedPath.StartsWith("help_bank/bank_cha_copyscn", StringComparison.Ordinal))
+            return "出现位置";
+
+        if (normalizedPath.StartsWith("skill/methodunit_data", StringComparison.Ordinal))
+        {
+            string name = CleanGlobalTitle(ExtractGlobalNameCandidate(GetCell(row, 0)));
+            if (string.IsNullOrWhiteSpace(name) || IsCompactNumericCell(name))
+                return "关联桥";
+
+            return name.Contains("状态", StringComparison.Ordinal) ||
+                   name.Contains("无敌", StringComparison.Ordinal) ||
+                   name.Contains("免疫", StringComparison.Ordinal) ||
+                   name.Contains("减速", StringComparison.Ordinal) ||
+                   name.Contains("加速", StringComparison.Ordinal) ||
+                   name.Contains("眩晕", StringComparison.Ordinal) ||
+                   name.Contains("定身", StringComparison.Ordinal) ||
+                   name.Contains("沉默", StringComparison.Ordinal) ||
+                   name.Contains("击退", StringComparison.Ordinal) ||
+                   name.Contains("增益", StringComparison.Ordinal) ||
+                   name.Contains("减益", StringComparison.Ordinal)
+                ? "状态/触发"
+                : "效果用途";
+        }
+        if (normalizedPath.StartsWith("skill/skill_data", StringComparison.Ordinal))
+            return "所属技能";
+        if (normalizedPath.StartsWith("object/cha_list", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("object/ride", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_list", StringComparison.Ordinal) ||
+            normalizedPath.StartsWith("pet/pet_list_group", StringComparison.Ordinal))
+        {
+            return "使用者";
+        }
+        if (normalizedPath.StartsWith("skill/state_data", StringComparison.Ordinal))
+            return "状态/触发";
+        if (normalizedPath.StartsWith("scn/", StringComparison.Ordinal) ||
+            normalizedPath.Contains("scene", StringComparison.Ordinal) ||
+            normalizedPath.Contains("/map", StringComparison.Ordinal))
+        {
+            return "出现位置";
+        }
+        return "关联桥";
+    }
+
+    private static string CreateEffectMbUsageTitle(
+        string normalizedPath,
+        string tableName,
+        IReadOnlyList<string> row,
+        int sourceRow)
+    {
+        string name = CleanGlobalTitle(ExtractGlobalNameCandidate(GetCell(row, 0)));
+        if (string.IsNullOrWhiteSpace(name) || IsCompactNumericCell(name))
+            return CreateGlobalMbRowTitle(tableName, row, sourceRow);
+
+        if (normalizedPath.StartsWith("help_bank/bank_cha_copyscn", StringComparison.Ordinal))
+            return name;
+
+        int idColumn = normalizedPath.StartsWith("object/cha_skill_unit", StringComparison.Ordinal) ? 0 : 1;
+        string id = GetCell(row, idColumn).Trim();
+        return IsCompactNumericCell(id) ? $"{name}（ID {id}）" : name;
+    }
+
+    private static string CreateEffectUsageTitle(AssetEntry asset, string? rowTitle)
+    {
+        if (!string.IsNullOrWhiteSpace(rowTitle))
+            return rowTitle;
+        return Path.GetFileNameWithoutExtension(asset.Name);
+    }
+
+    private static IReadOnlyList<string> AppendEffectUsageChain(
+        IReadOnlyList<string> chain,
+        string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) ||
+            (chain.Count > 0 && chain[^1].Equals(value, StringComparison.OrdinalIgnoreCase)))
+        {
+            return chain;
+        }
+        return chain.Concat(new[] { value }).TakeLast(6).ToArray();
+    }
+
+    private static bool IsVisibleEffectUsageCategory(string category) => category is
+        "所属技能" or "使用者" or "出现位置";
+
+    private static string CreateEffectUsageDetail(
+        string category,
+        IReadOnlyList<string> chain)
+    {
+        return string.Empty;
+    }
+
+    private static int EffectUsageCategoryRank(string category) => category switch
+    {
+        "所属技能" => 0,
+        "效果用途" => 1,
+        "使用者" => 2,
+        "出现位置" => 3,
+        "状态/触发" => 4,
+        "触发/挂点" => 5,
+        _ => 10
+    };
 
     private async Task PreviewGlobalSearchModelAsync(
         GlobalSearchResultViewModel result,
@@ -3532,6 +4189,22 @@ public sealed partial class MainWindow : Window
         if (file is not null) await LoadArchiveAsync(file.Path);
     }
 
+    private void GameInfoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_gameInfoWindow is null)
+        {
+            string? guiArchive = _workspace.ArchivePaths.FirstOrDefault(path =>
+                System.IO.Path.GetFileName(path).Equals("gui.dpk", StringComparison.OrdinalIgnoreCase));
+            string? resourceFolder = string.IsNullOrWhiteSpace(guiArchive)
+                ? UserPreferences.LoadResourceFolder()
+                : System.IO.Path.GetDirectoryName(guiArchive);
+            _gameInfoWindow = new GameInfoWindow(resourceFolder);
+            _gameInfoWindow.Closed += (_, _) => _gameInfoWindow = null;
+        }
+
+        _gameInfoWindow.Activate();
+    }
+
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
         var pathBox = new TextBox
@@ -3678,12 +4351,6 @@ public sealed partial class MainWindow : Window
         });
         panel.Children.Add(new TextBlock { Text = $"版本：{AppVersion}" });
         panel.Children.Add(new TextBlock { Text = $"作者：{AppAuthor}" });
-        panel.Children.Add(new TextBlock
-        {
-            Text = "用于浏览、解释和导出《新寻仙》客户端 DPK 资源。",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
-        });
         var checkUpdateButton = new Button
         {
             Content = "检查更新",
@@ -3875,13 +4542,67 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        await ApplyModelPartSelectionAsync(composite, "正在更新组合部件");
+    }
+
+    private async void ModelPartSoloButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComposite is not CompositeModelEntry composite ||
+            sender is not FrameworkElement { Tag: CompositePartOptionViewModel selected })
+            return;
+
+        SetModelPartSelection(option => ReferenceEquals(option, selected));
+        await ApplyModelPartSelectionAsync(composite, $"正在单独显示：{selected.SlotName}");
+    }
+
+    private async void SelectAllModelPartsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComposite is not CompositeModelEntry composite) return;
+        SetModelPartSelection(_ => true);
+        await ApplyModelPartSelectionAsync(composite, "正在显示全部组合部件");
+    }
+
+    private async void ShowRequiredModelPartsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComposite is not CompositeModelEntry composite) return;
+        SetModelPartSelection(option => !option.IsOptional);
+        if (_modelPartOptions.All(option => !option.IsEnabled))
+            SetModelPartSelection(_ => true);
+        await ApplyModelPartSelectionAsync(composite, "正在仅显示主体部件");
+    }
+
+    private async void InvertModelPartsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComposite is not CompositeModelEntry composite) return;
+        SetModelPartSelection(option => !option.IsEnabled);
+        if (_modelPartOptions.All(option => !option.IsEnabled))
+            SetModelPartSelection(_ => true);
+        await ApplyModelPartSelectionAsync(composite, "正在反选组合部件");
+    }
+
+    private void SetModelPartSelection(Func<CompositePartOptionViewModel, bool> selector)
+    {
+        _updatingModelPartOptions = true;
+        try
+        {
+            foreach (CompositePartOptionViewModel option in _modelPartOptions)
+                option.IsEnabled = selector(option);
+        }
+        finally
+        {
+            _updatingModelPartOptions = false;
+        }
+    }
+
+    private async Task ApplyModelPartSelectionAsync(CompositeModelEntry composite, string loadingMessage)
+    {
         UserPreferences.SaveDisabledCompositeParts(
             CompositeModelDiagnostics.GetPresetKey(composite),
             _modelPartOptions.Where(option => !option.IsEnabled).Select(option => option.Key));
         UpdateModelWorkbenchStatus();
 
         int previewGeneration = ++_previewGeneration;
-        ShowPreviewLoading(previewGeneration, "正在更新组合部件");
+        ShowPreviewLoading(previewGeneration, loadingMessage);
         try
         {
             await PreviewCompositeModelAsync(composite, previewGeneration);
@@ -3897,32 +4618,8 @@ public sealed partial class MainWindow : Window
         if (_selectedComposite is not CompositeModelEntry composite)
             return;
 
-        _updatingModelPartOptions = true;
-        try
-        {
-            foreach (CompositePartOptionViewModel option in _modelPartOptions)
-                option.IsEnabled = true;
-        }
-        finally
-        {
-            _updatingModelPartOptions = false;
-        }
-
-        UserPreferences.SaveDisabledCompositeParts(
-            CompositeModelDiagnostics.GetPresetKey(composite),
-            Array.Empty<string>());
-        UpdateModelWorkbenchStatus();
-
-        int previewGeneration = ++_previewGeneration;
-        ShowPreviewLoading(previewGeneration, "正在恢复自动组合");
-        try
-        {
-            await PreviewCompositeModelAsync(composite, previewGeneration);
-        }
-        finally
-        {
-            HidePreviewLoading(previewGeneration);
-        }
+        SetModelPartSelection(_ => true);
+        await ApplyModelPartSelectionAsync(composite, "正在恢复自动组合");
     }
 
     private async Task<UpdateCheckResult> GetOrStartUpdateCheckAsync(bool force)
@@ -3999,14 +4696,6 @@ public sealed partial class MainWindow : Window
             {
                 Text = manifest.ReleaseNotes.Trim(),
                 TextWrapping = TextWrapping.Wrap
-            });
-        }
-        if (Uri.TryCreate(manifestUrl, UriKind.Absolute, out Uri? sourceUri))
-        {
-            panel.Children.Add(new TextBlock
-            {
-                Text = $"版本信息来源：{sourceUri.Host}",
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
             });
         }
         panel.Children.Add(progressBar);
@@ -4149,6 +4838,7 @@ public sealed partial class MainWindow : Window
                 AssetKind.Image => "图像",
                 AssetKind.Sound => "声音",
                 AssetKind.Model => "模型",
+                AssetKind.Effect => "技能特效",
                 AssetKind.Font => "字体",
                 AssetKind.MbTable => "MB表",
                 _ => "其他"
@@ -4265,6 +4955,14 @@ public sealed partial class MainWindow : Window
         StorageFile? file = await picker.PickSaveFileAsync();
         if (file is null) return;
         ModelTextureBinding? selectedTextureBinding = ModelTextureComboBox.SelectedItem as ModelTextureBinding;
+        IReadOnlySet<string>? enabledPartKeys = selectedComposite is not null &&
+                                                ReferenceEquals(_selectedComposite, selectedComposite) &&
+                                                _modelPartOptions.Count > 0
+            ? _modelPartOptions
+                .Where(option => option.IsEnabled)
+                .Select(option => option.Key)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
 
         SetBusy(true, selectedComposite is null ? "正在转换并导出 OBJ 部件…" : "正在合并并导出完整 OBJ 模型…");
         try
@@ -4274,7 +4972,10 @@ public sealed partial class MainWindow : Window
             {
                 if (selectedComposite is not null)
                 {
-                    IReadOnlyList<ObjExporter.ObjPart> parts = BuildCompositeObjParts(selectedComposite, outputPath);
+                    IReadOnlyList<ObjExporter.ObjPart> parts = BuildCompositeObjParts(
+                        selectedComposite,
+                        outputPath,
+                        enabledPartKeys);
                     ObjExporter.Export(parts, outputPath, selectedComposite.Name);
                 }
                 else if (selectedAsset is not null)
@@ -4305,7 +5006,10 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private IReadOnlyList<ObjExporter.ObjPart> BuildCompositeObjParts(CompositeModelEntry composite, string outputPath)
+    private IReadOnlyList<ObjExporter.ObjPart> BuildCompositeObjParts(
+        CompositeModelEntry composite,
+        string outputPath,
+        IReadOnlySet<string>? enabledPartKeys = null)
     {
         var parts = new List<ObjExporter.ObjPart>();
         var copiedTextures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -4313,6 +5017,9 @@ public sealed partial class MainWindow : Window
         for (int i = 0; i < composite.Parts.Count; i++)
         {
             CompositeModelPart part = composite.Parts[i];
+            if (enabledPartKeys is not null &&
+                !enabledPartKeys.Contains(CompositeModelDiagnostics.GetPartKey(part)))
+                continue;
             PmfMesh mesh = PmfParser.Parse(_workspace.Extract(part.MeshAsset));
             string? textureFileName = part.TextureBinding is null
                 ? null
@@ -4418,6 +5125,7 @@ public sealed partial class MainWindow : Window
         {
             "sound" => AssetKind.Sound,
             "model" => AssetKind.Model,
+            "effect" => AssetKind.Effect,
             "font" => AssetKind.Font,
             "mb" => AssetKind.MbTable,
             "global" => AssetKind.GlobalSearch,
@@ -4446,6 +5154,7 @@ public sealed partial class MainWindow : Window
         bool images = _currentKind == AssetKind.Image;
         bool sounds = _currentKind == AssetKind.Sound;
         bool models = _currentKind == AssetKind.Model;
+        bool effects = _currentKind == AssetKind.Effect;
         bool fonts = _currentKind == AssetKind.Font;
         bool mbTables = _currentKind == AssetKind.MbTable;
         bool globalSearch = _currentKind == AssetKind.GlobalSearch;
@@ -4456,6 +5165,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Image => "图标与贴图",
             AssetKind.Sound => "声音",
             AssetKind.Model => "模型",
+            AssetKind.Effect => "技能特效",
             AssetKind.Font => "字体",
             AssetKind.MbTable => "MB 表",
             AssetKind.GlobalSearch => "全局资料",
@@ -4467,6 +5177,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Image => "浏览 GUI 图标、装备图和 DDS 场景贴图",
             AssetKind.Sound => "直接试听 OGG 音乐、环境音与 WAV 音效",
             AssetKind.Model => "大尺寸实体预览 PMF 模型，并可转换导出为 OBJ",
+            AssetKind.Effect => "预览动态效果，并显示所属技能、使用者和出现位置",
             AssetKind.Font => "浏览 font.dpk 内的 TTF、OTF 和 TTC 字体资源",
             AssetKind.MbTable => "浏览 mb.dpk 内的玩法、物品、任务、技能等数据表",
             AssetKind.GlobalSearch => "输入名字、ID、路径或图标号，自动整理物品、套装、怪物、图标、模型和配置引用",
@@ -4478,6 +5189,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Image => "搜索图标名称或路径",
             AssetKind.Sound => "搜索音效、音乐或路径",
             AssetKind.Model => "搜索模型名称或路径",
+            AssetKind.Effect => "搜索技能特效名称或路径",
             AssetKind.Font => "搜索字体名称或路径",
             AssetKind.MbTable => "搜索 MB 表名称或路径",
             AssetKind.GlobalSearch => "搜索名称、ID、图标号、路径或表内容",
@@ -4490,6 +5202,7 @@ public sealed partial class MainWindow : Window
         ImagePreviewPanel.Visibility = images ? Visibility.Visible : Visibility.Collapsed;
         SoundPreviewPanel.Visibility = sounds ? Visibility.Visible : Visibility.Collapsed;
         ModelPreviewHost.Visibility = models ? Visibility.Visible : Visibility.Collapsed;
+        EffectPreviewHost.Visibility = effects ? Visibility.Visible : Visibility.Collapsed;
         MbTableDataPanel.Visibility = mbTables ? Visibility.Visible : Visibility.Collapsed;
         GenericPreviewPanel.Visibility = fonts || others ? Visibility.Visible : Visibility.Collapsed;
         GlobalSearchPanel.Visibility = globalSearch ? Visibility.Visible : Visibility.Collapsed;
@@ -4507,14 +5220,15 @@ public sealed partial class MainWindow : Window
         AssetBrowserPanel.Visibility = dungeonSummary || globalSearch ? Visibility.Collapsed : Visibility.Visible;
         PreviewPanel.Visibility = dungeonSummary || globalSearch ? Visibility.Collapsed : Visibility.Visible;
         FolderTreeColumn.Width = mbTables ? new GridLength(180) : new GridLength(230);
-        AssetListColumn.MinWidth = globalSearch ? 700 : mbTables ? 360 : models ? 600 : 650;
-        AssetListColumn.Width = globalSearch ? new GridLength(1, GridUnitType.Star) : mbTables ? new GridLength(500) : models ? new GridLength(650) : new GridLength(1.35, GridUnitType.Star);
+        AssetListColumn.MinWidth = globalSearch ? 700 : mbTables ? 360 : models || effects ? 600 : 650;
+        AssetListColumn.Width = globalSearch ? new GridLength(1, GridUnitType.Star) : mbTables ? new GridLength(500) : models || effects ? new GridLength(650) : new GridLength(1.35, GridUnitType.Star);
         PreviewColumn.MinWidth = mbTables ? 500 : 360;
         PreviewColumn.Width = models ? new GridLength(1, GridUnitType.Star) : new GridLength(1, GridUnitType.Star);
         SelectedFooterPanel.Visibility = mbTables || dungeonSummary || globalSearch ? Visibility.Collapsed : Visibility.Visible;
         ExpandModelButtonText.Text = "放大模型预览";
         if (!sounds) _mediaPlayer.Pause();
         if (_currentKind != AssetKind.Model) _modelPreview.SetMesh(null);
+        if (_currentKind != AssetKind.Effect) _effectPreview.SetEffect(null);
         PreviewImage.Source = null;
         ImageGrid.SelectedItem = null;
         AssetList.SelectedItem = null;
@@ -4534,6 +5248,7 @@ public sealed partial class MainWindow : Window
             AssetKind.Image => "从左侧选择一张图像",
             AssetKind.Sound => "从左侧选择一个声音",
             AssetKind.Model => "从左侧选择一个 PMF 模型",
+            AssetKind.Effect => "从左侧选择一个技能特效",
             AssetKind.Font => "从左侧选择一个字体文件",
             AssetKind.MbTable => "从左侧选择一个 MB 表文件",
             AssetKind.GlobalSearch => "输入关键词后查看反查结果",
@@ -4685,14 +5400,14 @@ public sealed partial class MainWindow : Window
     private void ClearMbTableView()
     {
         _currentMbTableView = null;
-        MbTableNameText.Text = "选择一个 MB 表";
+        MbTableNameText.Text = string.Empty;
         MbTablePathText.Text = string.Empty;
         MbDataSummaryText.Text = string.Empty;
         MbRecordCountText.Text = string.Empty;
         MbRecordList.ItemsSource = null;
         MbRecordList.SelectedItem = null;
         MbRecordEmptyPanel.Visibility = Visibility.Collapsed;
-        MbRecordTitleText.Text = "选择左侧记录查看字段";
+        MbRecordTitleText.Text = string.Empty;
         MbRecordSubtitleText.Text = string.Empty;
         MbFieldList.ItemsSource = null;
         MbRecordExtraPanel.Visibility = Visibility.Collapsed;
@@ -4708,7 +5423,7 @@ public sealed partial class MainWindow : Window
         MbRecordCountText.Text = string.Empty;
         MbRecordList.ItemsSource = null;
         MbRecordEmptyPanel.Visibility = Visibility.Visible;
-        MbRecordTitleText.Text = "无法解析表格";
+        MbRecordTitleText.Text = string.Empty;
         MbRecordSubtitleText.Text = message;
         MbFieldList.ItemsSource = null;
         MbRecordExtraPanel.Visibility = Visibility.Collapsed;
@@ -4732,8 +5447,8 @@ public sealed partial class MainWindow : Window
         else
         {
             MbRecordList.SelectedIndex = -1;
-            MbRecordTitleText.Text = "没有记录";
-            MbRecordSubtitleText.Text = "这个表解析成功，但没有可显示的数据行。";
+            MbRecordTitleText.Text = string.Empty;
+            MbRecordSubtitleText.Text = string.Empty;
             MbFieldList.ItemsSource = null;
             MbRecordExtraPanel.Visibility = Visibility.Collapsed;
             MbRecordExtraText.Text = string.Empty;
@@ -4754,9 +5469,8 @@ public sealed partial class MainWindow : Window
         MbRecordSubtitleText.Text = $"{tableView.TableName} · 原始第 {record.SourceRow:N0} 行";
         MbFieldList.ItemsSource = BuildMbFieldViewModels(tableView, record.Row);
 
-        string extraDetails = BuildMbRecordExtraDetails(tableView.Asset, record.Row);
-        MbRecordExtraPanel.Visibility = string.IsNullOrWhiteSpace(extraDetails) ? Visibility.Collapsed : Visibility.Visible;
-        MbRecordExtraText.Text = extraDetails.Trim();
+        MbRecordExtraPanel.Visibility = Visibility.Collapsed;
+        MbRecordExtraText.Text = string.Empty;
     }
 
     private IReadOnlyList<MbFieldViewModel> BuildMbFieldViewModels(MbTableViewModel tableView, IReadOnlyList<string> row)
@@ -4765,7 +5479,7 @@ public sealed partial class MainWindow : Window
         foreach (int column in tableView.ActiveColumns)
         {
             string value = column < row.Count ? row[column].Trim() : string.Empty;
-            string displayValue = string.IsNullOrWhiteSpace(value) ? "空" : value;
+            string displayValue = value;
             string name = GetColumnName(tableView.Headers, column);
             string note = GetMbFieldNote(tableView.Asset, name, column, value);
             fields.Add(new MbFieldViewModel(name, displayValue, note, column));
@@ -4779,7 +5493,7 @@ public sealed partial class MainWindow : Window
     private void ShowPreviewLoading(int generation, string text)
     {
         if (!IsPreviewCurrent(generation)) return;
-        PreviewLoadingText.Text = text;
+        PreviewLoadingText.Text = string.Empty;
         PreviewLoadingOverlay.Visibility = Visibility.Visible;
     }
 
@@ -4794,10 +5508,10 @@ public sealed partial class MainWindow : Window
         Visibility visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         GenericPreviewIconBorder.Visibility = visibility;
         GenericPreviewNameText.Visibility = visibility;
-        GenericPreviewRawNameText.Visibility = visibility;
-        GenericExplanationCard.Visibility = visibility;
-        GenericPreviewTechnicalText.Visibility = visibility;
-        GenericPreviewHintText.Visibility = visibility;
+        GenericPreviewRawNameText.Visibility = Visibility.Collapsed;
+        GenericExplanationCard.Visibility = Visibility.Collapsed;
+        GenericPreviewTechnicalText.Visibility = Visibility.Collapsed;
+        GenericPreviewHintText.Visibility = Visibility.Collapsed;
     }
 
     private static string? TryCreateTextPreview(AssetEntry asset, byte[] data)
@@ -4820,7 +5534,7 @@ public sealed partial class MainWindow : Window
         const int maximumCharacters = 200_000;
         return text.Length <= maximumCharacters
             ? text
-            : text[..maximumCharacters] + "\n\n……内容过长，预览到此为止；导出原始文件可查看完整内容。";
+            : text[..maximumCharacters];
     }
 
     private bool TryBuildMbTableView(
@@ -6953,6 +7667,19 @@ public sealed partial class MainWindow : Window
         string MatchReason,
         int SortRank,
         IReadOnlyList<GlobalSearchLinkViewModel> Links);
+
+    private sealed record EffectReferenceDocument(
+        AssetEntry Asset,
+        string Category,
+        string Title,
+        string SourcePath,
+        IReadOnlySet<string> References,
+        IReadOnlySet<string> OwnKeys);
+
+    private sealed record EffectUsageGraph(
+        Dictionary<string, List<EffectReferenceDocument>> ReverseReferences,
+        Dictionary<string, List<EffectReferenceDocument>> DocumentsByOwnKey,
+        Dictionary<string, string> KeyLabels);
 
     private void SetBusy(bool busy, string? status = null)
     {

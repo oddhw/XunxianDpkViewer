@@ -52,6 +52,9 @@
                 <NavigationViewItem x:Name="ModelNavigationItem" Content="模型" Tag="model" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE809;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="EffectNavigationItem" Content="技能特效" Tag="effect" Visibility="Collapsed" Foreground="{StaticResource PrimaryTextBrush}">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7FC;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Content="字体" Tag="font" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE8D2;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
@@ -61,7 +64,7 @@
                 <NavigationViewItem x:Name="GlobalSearchNavigationItem" Content="全局资料" Tag="global" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE721;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="DungeonNavigationItem" Content="副本怪物（停用）" Tag="dungeon" Foreground="{StaticResource PrimaryTextBrush}">
+                <NavigationViewItem x:Name="DungeonNavigationItem" Content="副本怪物" Tag="dungeon" Foreground="{StaticResource PrimaryTextBrush}">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE7FC;" Foreground="{StaticResource AccentTextBrush}" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
@@ -81,16 +84,16 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock x:Name="PageTitleText" Text="图标与贴图" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-                            <TextBlock x:Name="PageDescriptionText" Text="浏览 GUI 图标、装备图和场景贴图" Margin="0,3,0,0" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock x:Name="PageDescriptionText" Visibility="Collapsed" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Click="OpenFolderButton_Click" ToolTipService.ToolTip="选择包含 DPK 的 res 目录">
+                            <Button Click="OpenFolderButton_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                     <FontIcon Glyph="&#xE8B7;" FontSize="14" />
                                     <TextBlock Text="打开资源目录" />
                                 </StackPanel>
                             </Button>
-                            <Button Click="OpenArchiveButton_Click" ToolTipService.ToolTip="打开单个 DPK 文件">
+                            <Button Click="OpenArchiveButton_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                     <FontIcon Glyph="&#xE8E5;" FontSize="14" />
                                     <TextBlock Text="打开 DPK" />
@@ -102,13 +105,19 @@
                                     <TextBlock Text="导出查询结果" />
                                 </StackPanel>
                             </Button>
-                            <Button Click="SettingsButton_Click" ToolTipService.ToolTip="设置资源目录">
+                            <Button Click="GameInfoButton_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                    <FontIcon Glyph="&#xE82D;" FontSize="14" />
+                                    <TextBlock Text="游戏信息" />
+                                </StackPanel>
+                            </Button>
+                            <Button Click="SettingsButton_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                     <FontIcon Glyph="&#xE713;" FontSize="14" />
                                     <TextBlock Text="设置" />
                                 </StackPanel>
                             </Button>
-                            <Button Click="AboutButton_Click" ToolTipService.ToolTip="版本与作者信息">
+                            <Button Click="AboutButton_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                     <FontIcon Glyph="&#xE946;" FontSize="14" />
                                     <TextBlock Text="关于" />
@@ -127,7 +136,6 @@
                         <AutoSuggestBox x:Name="SearchBox"
                                         Height="40"
                                         VerticalAlignment="Center"
-                                        PlaceholderText="搜索文件名或资源路径"
                                         TextChanged="SearchBox_TextChanged" />
                         <ComboBox x:Name="SortComboBox"
                                   Grid.Column="1"
@@ -136,7 +144,7 @@
                                   VerticalAlignment="Center"
                                   SelectedIndex="0"
                                   SelectionChanged="SortComboBox_SelectionChanged"
-                                  ToolTipService.ToolTip="排序方式">
+                                  >
                             <ComboBoxItem Content="名称：自然升序" />
                             <ComboBoxItem Content="名称：自然降序" />
                             <ComboBoxItem Content="类型，再按名称" />
@@ -154,7 +162,7 @@
                                       Toggled="BeginnerModeToggle_Toggled" />
                         <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center" Spacing="10">
                             <ProgressRing x:Name="BusyRing" Width="18" Height="18" IsActive="False" />
-                            <TextBlock x:Name="StatusText" Foreground="{StaticResource SecondaryTextBrush}" Text="等待载入资源" />
+                            <TextBlock x:Name="StatusText" Visibility="Collapsed" />
                             <TextBlock x:Name="CurrentPathText" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="420" />
                         </StackPanel>
                     </Grid>
@@ -180,7 +188,7 @@
                                         </Grid.RowDefinitions>
                                         <StackPanel Margin="8,6,8,8" Spacing="3">
                                             <TextBlock x:Name="FolderTreeTitleText" Text="DPK 目录" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                                            <TextBlock x:Name="FolderTreeHintText" Text="按包内真实路径浏览" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                                            <TextBlock x:Name="FolderTreeHintText" Visibility="Collapsed" />
                                         </StackPanel>
                                         <TreeView x:Name="FolderTree"
                                                   Grid.Row="1"
@@ -204,7 +212,6 @@
                                             </Grid.ColumnDefinitions>
                                             <TextBlock x:Name="CurrentFolderText"
                                                        VerticalAlignment="Center"
-                                                       Text="尚未选择目录"
                                                        Foreground="{StaticResource SecondaryTextBrush}"
                                                        FontSize="11"
                                                        TextTrimming="CharacterEllipsis" />
@@ -303,7 +310,6 @@
 
                                 <StackPanel x:Name="EmptyPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
                                     <FontIcon Glyph="&#xE721;" FontSize="38" Foreground="{StaticResource MutedTextBrush}" />
-                                    <TextBlock Text="当前文件夹没有匹配资源" Foreground="{StaticResource SecondaryTextBrush}" />
                                 </StackPanel>
                                     </Grid>
                                 </Grid>
@@ -333,12 +339,16 @@
                                                 <Border Width="104" Height="104" CornerRadius="52" Background="{StaticResource AccentSurfaceBrush}">
                                                     <FontIcon Glyph="&#xE8D6;" FontSize="44" Foreground="{StaticResource AccentTextBrush}" />
                                                 </Border>
-                                                <TextBlock x:Name="SoundNameText" Text="选择声音文件" Foreground="{StaticResource PrimaryTextBrush}" FontSize="18" TextAlignment="Center" />
+                                                <TextBlock x:Name="SoundNameText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="18" TextAlignment="Center" />
                                             </StackPanel>
                                         </Border>
                                         <ContentControl x:Name="AudioPlayerHost" Grid.Row="1" Margin="0,12,0,0" />
                                     </Grid>
                                     <ContentControl x:Name="ModelPreviewHost"
+                                                    Visibility="Collapsed"
+                                                    HorizontalContentAlignment="Stretch"
+                                                    VerticalContentAlignment="Stretch" />
+                                    <ContentControl x:Name="EffectPreviewHost"
                                                     Visibility="Collapsed"
                                                     HorizontalContentAlignment="Stretch"
                                                     VerticalContentAlignment="Stretch" />
@@ -356,9 +366,9 @@
                                                         <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel Spacing="4">
-                                                        <TextBlock x:Name="MbTableNameText" Text="选择一个 MB 表" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock x:Name="MbTableNameText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                         <TextBlock x:Name="MbTablePathText" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
-                                                        <TextBlock x:Name="MbDataSummaryText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="MbDataSummaryText" Visibility="Collapsed" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
                                                         <Button x:Name="MbExportButton" Click="ExportSelectedButton_Click" IsEnabled="False" Padding="10,5">
@@ -420,7 +430,6 @@
                                                                 </ListView>
                                                                 <StackPanel x:Name="MbRecordEmptyPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
                                                                     <FontIcon Glyph="&#xE721;" FontSize="32" Foreground="{StaticResource MutedTextBrush}" />
-                                                                    <TextBlock Text="这个表没有可显示的记录" Foreground="{StaticResource SecondaryTextBrush}" />
                                                                 </StackPanel>
                                                             </Grid>
                                                         </Grid>
@@ -433,9 +442,9 @@
                                                                 <RowDefinition Height="*" />
                                                             </Grid.RowDefinitions>
                                                             <StackPanel Spacing="3">
-                                                                <TextBlock Text="字段解释" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
-                                                                <TextBlock x:Name="MbRecordTitleText" Text="选择左侧记录查看字段" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                                                <TextBlock x:Name="MbRecordSubtitleText" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" />
+                                                                <TextBlock Text="字段" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
+                                                                <TextBlock x:Name="MbRecordTitleText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                                <TextBlock x:Name="MbRecordSubtitleText" Visibility="Collapsed" />
                                                             </StackPanel>
                                                             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                                                 <StackPanel Spacing="10">
@@ -453,7 +462,7 @@
                                                                                     </StackPanel>
                                                                                     <StackPanel Grid.Column="1" Spacing="3">
                                                                                         <TextBlock Text="{Binding Value}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
-                                                                                        <TextBlock Text="{Binding Note}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" TextWrapping="Wrap" />
+                                                                                        <TextBlock Text="{Binding Note}" Visibility="Collapsed" />
                                                                                     </StackPanel>
                                                                                 </Grid>
                                                                             </DataTemplate>
@@ -484,9 +493,9 @@
                                                     <Border x:Name="GenericPreviewIconBorder" Width="82" Height="82" CornerRadius="24" Background="{StaticResource AccentSurfaceBrush}" HorizontalAlignment="Left">
                                                         <FontIcon x:Name="GenericPreviewIcon" Glyph="&#xE8A5;" FontSize="36" Foreground="{StaticResource AccentTextBrush}" />
                                                     </Border>
-                                                    <TextBlock x:Name="GenericPreviewNameText" Text="选择一个资源文件" Foreground="{StaticResource PrimaryTextBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                                    <TextBlock x:Name="GenericPreviewRawNameText" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" />
-                                                    <Border x:Name="GenericExplanationCard" Background="{StaticResource SurfaceRaisedBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16" Margin="0,6,0,0">
+                                                    <TextBlock x:Name="GenericPreviewNameText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock x:Name="GenericPreviewRawNameText" Visibility="Collapsed" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" />
+                                                    <Border x:Name="GenericExplanationCard" Visibility="Collapsed" Background="{StaticResource SurfaceRaisedBrush}" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16" Margin="0,6,0,0">
                                                         <StackPanel Spacing="10">
                                                             <TextBlock Text="它是做什么的？" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
                                                             <TextBlock x:Name="GenericPreviewPurposeText" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap" />
@@ -495,8 +504,8 @@
                                                             <TextBlock x:Name="GenericPreviewConfidenceText" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
                                                         </StackPanel>
                                                     </Border>
-                                                    <TextBlock x:Name="GenericPreviewTechnicalText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" TextWrapping="Wrap" />
-                                                    <TextBlock x:Name="GenericPreviewHintText" Text="可查看属性或导出原始文件" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                                    <TextBlock x:Name="GenericPreviewTechnicalText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" TextWrapping="Wrap" />
+                                                    <TextBlock x:Name="GenericPreviewHintText" Visibility="Collapsed" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
                                                     <Border x:Name="MbTablePreviewPanel"
                                                             Visibility="Collapsed"
                                                             Background="{StaticResource SurfaceRaisedBrush}"
@@ -507,7 +516,7 @@
                                                             Margin="0,4,0,0">
                                                         <StackPanel Spacing="8">
                                                             <TextBlock x:Name="MbTableTitleText" Text="表格内容" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
-                                                            <TextBlock x:Name="MbTableSummaryText" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                                            <TextBlock x:Name="MbTableSummaryText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                                             <TextBox x:Name="MbTablePreviewBox"
                                                                      IsReadOnly="True"
                                                                      AcceptsReturn="True"
@@ -543,7 +552,7 @@
                                                     Width="320"
                                                     Spacing="12">
                                             <TextBlock x:Name="PreviewLoadingText"
-                                                       Text="正在加载模型..."
+                                                       Visibility="Collapsed"
                                                        Foreground="{StaticResource PrimaryTextBrush}"
                                                        FontSize="14"
                                                        FontWeight="SemiBold"
@@ -555,9 +564,9 @@
                                 </Grid>
 
                                 <StackPanel x:Name="SelectedFooterPanel" Grid.Row="1" Margin="2,16,2,2" Spacing="8">
-                                    <TextBlock x:Name="SelectedNameText" Text="尚未选择资源" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
-                                    <TextBlock x:Name="SelectedPathText" Text="从左侧选择图标、声音或模型" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" MaxHeight="48" />
-                                    <TextBlock x:Name="SelectedMetadataText" Foreground="{StaticResource AccentTextBrush}" FontSize="11" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="SelectedNameText" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="SelectedPathText" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" MaxHeight="48" />
+                                    <TextBlock x:Name="SelectedMetadataText" Visibility="Collapsed" Foreground="{StaticResource AccentTextBrush}" FontSize="11" TextWrapping="Wrap" />
                                     <Border x:Name="ModelWorkbenchPanel"
                                             Visibility="Collapsed"
                                             Background="{StaticResource SurfaceAltBrush}"
@@ -582,20 +591,26 @@
                                                                Foreground="{StaticResource PrimaryTextBrush}"
                                                                FontWeight="SemiBold" />
                                                     <TextBlock x:Name="ModelWorkbenchStatusText"
+                                                               Visibility="Collapsed"
                                                                Foreground="{StaticResource AccentTextBrush}"
                                                                FontSize="11"
                                                                TextWrapping="Wrap" />
                                                 </StackPanel>
-                                                <Button x:Name="ResetModelPartsButton"
-                                                        Grid.Column="1"
-                                                        Content="恢复自动组合"
-                                                        VerticalAlignment="Center"
-                                                        Click="ResetModelPartsButton_Click" />
+                                                <StackPanel Grid.Column="1"
+                                                            Orientation="Horizontal"
+                                                            Spacing="6"
+                                                            VerticalAlignment="Center">
+                                                    <Button Content="全部显示"
+                                                            Click="SelectAllModelPartsButton_Click" />
+                                                    <Button Content="只看主体"
+                                                            Click="ShowRequiredModelPartsButton_Click" />
+                                                    <Button Content="反选"
+                                                            Click="InvertModelPartsButton_Click" />
+                                                    <Button x:Name="ResetModelPartsButton"
+                                                            Content="恢复自动组合"
+                                                            Click="ResetModelPartsButton_Click" />
+                                                </StackPanel>
                                             </Grid>
-                                            <TextBlock Grid.Row="1"
-                                                       Text="取消勾选可隐藏叠加错误的部件；当前方案会保存在本机。"
-                                                       Foreground="{StaticResource MutedTextBrush}"
-                                                       FontSize="11" />
                                             <ListView x:Name="ModelPartList"
                                                       Grid.Row="2"
                                                       MaxHeight="180"
@@ -603,31 +618,38 @@
                                                       IsItemClickEnabled="False">
                                                 <ListView.ItemTemplate>
                                                     <DataTemplate>
-                                                        <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
-                                                                  Tag="{Binding}"
-                                                                  Click="ModelPartToggle_Click"
-                                                                  HorizontalAlignment="Stretch">
-                                                            <Grid MinHeight="34" ColumnSpacing="12">
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="100" />
-                                                                    <ColumnDefinition Width="*" />
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
-                                                                <TextBlock Text="{Binding SlotName}"
-                                                                           Foreground="{StaticResource PrimaryTextBrush}"
-                                                                           VerticalAlignment="Center" />
-                                                                <TextBlock Grid.Column="1"
-                                                                           Text="{Binding FileName}"
-                                                                           Foreground="{StaticResource SecondaryTextBrush}"
-                                                                           TextTrimming="CharacterEllipsis"
-                                                                           VerticalAlignment="Center" />
-                                                                <TextBlock Grid.Column="2"
-                                                                           Text="{Binding KindText}"
-                                                                           Foreground="{StaticResource MutedTextBrush}"
-                                                                           FontSize="11"
-                                                                           VerticalAlignment="Center" />
-                                                            </Grid>
-                                                        </CheckBox>
+                                                        <Grid MinHeight="34" ColumnSpacing="10">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="100" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                                                      Tag="{Binding}"
+                                                                      Click="ModelPartToggle_Click"
+                                                                      VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="1"
+                                                                       Text="{Binding SlotName}"
+                                                                       Foreground="{StaticResource PrimaryTextBrush}"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="2"
+                                                                       Text="{Binding FileName}"
+                                                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="3"
+                                                                       Text="{Binding KindText}"
+                                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                                       FontSize="11"
+                                                                       VerticalAlignment="Center" />
+                                                            <Button Grid.Column="4"
+                                                                    Tag="{Binding}"
+                                                                    Padding="9,4"
+                                                                    Content="仅看"
+                                                                    Click="ModelPartSoloButton_Click" />
+                                                        </Grid>
                                                     </DataTemplate>
                                                 </ListView.ItemTemplate>
                                             </ListView>
@@ -643,7 +665,6 @@
                                                   Grid.Column="1"
                                                   MinWidth="260"
                                                   HorizontalAlignment="Stretch"
-                                                  PlaceholderText="没有找到关联贴图"
                                                   SelectionChanged="ModelTextureComboBox_SelectionChanged" />
                                     </Grid>
                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
@@ -697,7 +718,7 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Spacing="4">
                                         <TextBlock Text="全局资料中心" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="SemiBold" />
-                                        <TextBlock x:Name="GlobalSearchStatusText" Text="输入名称、ID、图标号或路径后，自动整理物品、套装、怪物、资源文件和引用关系。" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="GlobalSearchStatusText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <Border Grid.Column="1" Padding="10,5" CornerRadius="8" Background="{StaticResource SubtleSurfaceBrush}" VerticalAlignment="Top">
                                         <TextBlock x:Name="GlobalSearchCountText" Foreground="{StaticResource AccentTextBrush}" FontSize="12" />
@@ -745,8 +766,6 @@
                                                                             <TextBlock Text="{Binding Category}" Foreground="{StaticResource AccentTextBrush}" FontSize="10" />
                                                                         </Border>
                                                                     </StackPanel>
-                                                                    <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
-                                                                    <TextBlock Text="{Binding MatchReason}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                                                                 </StackPanel>
                                                             </Grid>
                                                         </DataTemplate>
@@ -754,7 +773,6 @@
                                                 </ListView>
                                                 <StackPanel x:Name="GlobalSearchEmptyPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
                                                     <FontIcon Glyph="&#xE721;" FontSize="36" Foreground="{StaticResource MutedTextBrush}" />
-                                                    <TextBlock Text="输入关键词后开始反查" Foreground="{StaticResource SecondaryTextBrush}" />
                                                 </StackPanel>
                                             </Grid>
                                         </Grid>
@@ -774,9 +792,9 @@
                                                         <Image x:Name="GlobalSearchPreviewImage" Stretch="UniformToFill" />
                                                     </Border>
                                                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                                        <TextBlock x:Name="GlobalSearchDetailTitleText" Text="选择一条结果" Foreground="{StaticResource PrimaryTextBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                                        <TextBlock x:Name="GlobalSearchDetailMetaText" Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap" />
-                                                        <TextBlock x:Name="GlobalSearchDetailSourceText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="GlobalSearchDetailTitleText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="GlobalSearchDetailMetaText" Visibility="Collapsed" Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="GlobalSearchDetailSourceText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </Grid>
 
@@ -800,6 +818,7 @@
                                                             <TextBlock Text="完整模型" Foreground="{StaticResource AccentTextBrush}" FontWeight="SemiBold" />
                                                             <TextBlock x:Name="GlobalSearchModelStatusText"
                                                                        Grid.Column="1"
+                                                                       Visibility="Collapsed"
                                                                        Foreground="{StaticResource MutedTextBrush}"
                                                                        FontSize="11" />
                                                         </Grid>
@@ -952,7 +971,7 @@
                                                                 </DataTemplate>
                                                             </ItemsControl.ItemTemplate>
                                                         </ItemsControl>
-                                                        <TextBlock x:Name="GlobalSearchNoLinksText" Text="暂时没有可跳转的关联资料。" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                                        <TextBlock x:Name="GlobalSearchNoLinksText" Visibility="Collapsed" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
                                                     </StackPanel>
                                                 </Border>
 
@@ -995,9 +1014,9 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Spacing="4">
                                         <TextBlock Text="副本怪物属性汇总" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="SemiBold" />
-                                        <TextBlock x:Name="DungeonSummaryStatusText" Text="从 MB 表自动汇总怪物、头像、战斗属性、隐藏状态和掉落组" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="DungeonSummaryStatusText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                         <TextBlock x:Name="DungeonWorkInProgressNoticeText"
-                                                   Text="《工作量太庞大了，做不完了 先挖个坑 这里的文件只做参考 不具备实际用途 》"
+                                                   Visibility="Collapsed"
                                                    Foreground="{StaticResource AccentTextBrush}"
                                                    FontWeight="SemiBold"
                                                    TextWrapping="Wrap" />
@@ -1029,7 +1048,6 @@
                                                     <DataTemplate>
                                                         <StackPanel MinHeight="46" Padding="8,6" Spacing="2">
                                                             <TextBlock Text="{Binding Name}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                            <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" TextTrimming="CharacterEllipsis" />
                                                         </StackPanel>
                                                     </DataTemplate>
                                                 </ListView.ItemTemplate>
@@ -1072,7 +1090,6 @@
                                                                         <TextBlock Text="{Binding KindText}" Foreground="{StaticResource AccentTextBrush}" FontSize="10" />
                                                                     </Border>
                                                                 </StackPanel>
-                                                                <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                                                                 <TextBlock Text="{Binding CompactStats}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                                                             </StackPanel>
                                                         </Grid>
@@ -1094,7 +1111,7 @@
                                                         <Image x:Name="DungeonMonsterPortraitImage" Stretch="UniformToFill" />
                                                     </Border>
                                                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                                        <TextBlock x:Name="DungeonMonsterNameText" Text="选择一个怪物" Foreground="{StaticResource PrimaryTextBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="DungeonMonsterNameText" Foreground="{StaticResource PrimaryTextBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
                                                         <TextBlock x:Name="DungeonMonsterMetaText" Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap" />
                                                         <TextBlock x:Name="DungeonMonsterExplainText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" />
                                                     </StackPanel>
@@ -1171,9 +1188,6 @@
                 <Border Width="64" Height="64" CornerRadius="18" Background="{StaticResource AccentSurfaceBrush}" HorizontalAlignment="Center">
                     <FontIcon Glyph="&#xE8B7;" FontSize="28" Foreground="{StaticResource AccentTextBrush}" />
                 </Border>
-                <TextBlock Text="先选择《新寻仙》客户端目录" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" TextAlignment="Center" />
-                <TextBlock Text="可以选择游戏安装目录，也可以直接选择 res 目录。程序会记住这个位置，换电脑后首次启动会重新提示。"
-                           Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center" />
                 <Button Content="选择客户端目录" Click="ChooseInitialPathButton_Click" HorizontalAlignment="Center" Padding="22,10" />
             </StackPanel>
         </Border>

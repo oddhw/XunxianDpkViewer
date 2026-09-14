@@ -64,6 +64,7 @@ public sealed partial class MainWindow : Window
     private bool _multiSelectMode;
     private bool _settingModelTextureSelection;
     private Task<UpdateCheckResult>? _activeUpdateCheckTask;
+    private bool _startupUpdateCheckStarted;
     private FolderNodeInfo? _selectedFolder;
     private int _previewGeneration;
     private readonly Dictionary<string, string> _mbSearchTextCache = new(StringComparer.OrdinalIgnoreCase);
@@ -269,7 +270,11 @@ public sealed partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        _ = CheckForUpdatesAsync(silent: true);
+        if (!_startupUpdateCheckStarted)
+        {
+            _startupUpdateCheckStarted = true;
+            await CheckForUpdatesAsync(silent: true, force: true);
+        }
 
         string? explicitArgument = Environment.GetCommandLineArgs()
             .FirstOrDefault(argument => argument.StartsWith("--resource-folder=", StringComparison.OrdinalIgnoreCase));
@@ -4221,13 +4226,6 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(18, 9, 18, 9)
         };
-        var autoUpdateToggle = new ToggleSwitch
-        {
-            Header = "自动检查更新",
-            OffContent = "已关闭",
-            OnContent = "已开启",
-            IsOn = UserPreferences.LoadAutoCheckForUpdates()
-        };
         var checkUpdateButton = new Button
         {
             Content = "检查更新",
@@ -4276,13 +4274,6 @@ public sealed partial class MainWindow : Window
             FontSize = 16,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
         });
-        panel.Children.Add(autoUpdateToggle);
-        panel.Children.Add(new TextBlock
-        {
-            Text = "更新会在软件内下载并校验，完成后自动重启安装。",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
-        });
         panel.Children.Add(checkUpdateButton);
         panel.Children.Add(updateStatusPanel);
 
@@ -4299,8 +4290,6 @@ public sealed partial class MainWindow : Window
             dialog.Hide();
             await PickAndLoadResourceFolderAsync();
         };
-        autoUpdateToggle.Toggled += (_, _) =>
-            UserPreferences.SaveAutoCheckForUpdates(autoUpdateToggle.IsOn);
         UpdateChannelManifest? pendingUpdate = null;
         string? pendingManifestUrl = null;
         checkUpdateButton.Click += async (_, _) =>
@@ -4639,13 +4628,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task CheckForUpdatesAsync(bool silent)
+    private async Task CheckForUpdatesAsync(bool silent, bool force = false)
     {
         if (!silent) SetStatus("正在检查更新…");
 
         try
         {
-            UpdateCheckResult result = await GetOrStartUpdateCheckAsync(force: !silent);
+            UpdateCheckResult result = await GetOrStartUpdateCheckAsync(force || !silent);
             if (!result.Checked) return;
 
             if (result.IsUpdateAvailable && result.Manifest is not null)

@@ -80,6 +80,13 @@ if ($mainWindowCode -notmatch 'CheckForUpdatesInDialogAsync' -or
     $mainWindowCode -notmatch 'GetOrStartUpdateCheckAsync') {
     throw "The update check dialog must show progress and coalesce repeated requests."
 }
+if ($mainWindowCode -notmatch 'await\s+CheckForUpdatesAsync\(silent:\s*true,\s*force:\s*true\)' -or
+    $mainWindowCode -match '_\s*=\s*CheckForUpdatesAsync\(silent:\s*true') {
+    throw "Startup must await a forced update check so available releases cannot be skipped."
+}
+if ($mainWindowCode -match 'Header\s*=\s*"自动检查更新"') {
+    throw "Startup update checks must not be disabled from settings."
+}
 $manifestObject = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $packageInfo = Get-Item -LiteralPath $packageFullPath
 $packageVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($packageFullPath).FileVersion

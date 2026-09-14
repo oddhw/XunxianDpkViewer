@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "3.1",
-  "releaseNotes": "新增万象宝盘查询系统",
-  "publishedAt": "2026-09-14T12:11:38+08:00",
+  "version": "3.1.1",
+  "releaseNotes": "",
+  "publishedAt": "2026-09-14T12:30:46+08:00",
   "bootstrapUrls": [
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
@@ -13,13 +13,13 @@
   ],
   "packages": [
     {
-      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.1/XunxianDpkViewer.exe",
-      "sha256": "780CAB9BF2C250AC53602FF9A3A238B0BF646EAAD296187FF54DA368EB23B074",
-      "signature": "lADgUvgFNgAv4R7xOyX0erFOWw8ZuPTTn9C2P9rvf+t0EfLZyW0nVj1qOWhFk6Rn+S53RSVJhWrfG/LfoDyydjGKws9NMKI23leGFm1RFShOYWhh+4cxY8w0AJIGvn0lsExGlX/MS8fhjiu+ip6knk+YX04X8/G8f1NwsmxfA/CH5Wb69ynwXur74mx+93l9EqIEUxBCGCrU8IU7VL+LRqUaa4siS6qv3G7bYnI1HAwDbN2cY41dGuuAtBfuoeeCxRvNFxDjz05jpnFUKf0cKqM4Hpy60kjYrKS42jGRhEoZobFwUuvua3TiDchceO4Ii77Kdr1Plx5ExwR14ADv9zQ4yPeyehEgQVxc7lRZALsGkeGqq4hmuLuF276zF7o8qZ2eLcSyR+0Y45Gj9az8yf8JAwvGsxWBgtNne8Eb2iTvZeOEW4268BTeWQQF0Uo/7kX5i7icRvoI9BWmXxY8k2YY7FxE9XjOveJH37hHRbllsNTCjgkMIci8SjxRaDw7Y/IsyubFsVDiZuYOrkGglTSlvdFvTkoHd+iVSO6esh55+izjVFPyXzzctcUTDBUPAhgadpJlHZmb2ANwvA/z2TmeMXNX/g+uZj58oUzds8oz3QcgNaqcNkYhugq8Ovpz0LJX9v1MF5L0pv1y2I0LcUyouKjlaVB3qB1Gtml6gPQ=",
-      "size": 96883358,
+      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.1.1/XunxianDpkViewer.exe",
+      "sha256": "E58136416EB809148B93571B7AB71C7C3541D2DF4C00A8C7CC3EEC8AE13B92D4",
+      "signature": "n8svCxsmljdVZAliPvmTSYTyLm8CQShzRmGRF5weOQY2ZLE9UKBLD4B0eDevFcwaNZ4dlPoe3Qkuer2k4iQJMnIziOwGMYlckD2++ZWViBdISxDHWShYVc5c2bf+lozgUtXZE4vAbkGa1g/L7AW+sclTKfM929FMeMPK9Ryw0KoeevIC3lFoRE2YJq7qmsk7cyrnmBtKxlw6xFiO0qPyGnArH/ZdXf5bxLrZEos8bRDO0ysIPX/WBz0zW71cZxOEqHtgNURwQz43I4l9HXZ8+hBJzxoYn7nwpmY2OE1X9+ziBnawTzsa/xn80QQJAo+R3whe/Db92O8QDlBKZNqWRCTMa/w7kVJxpyDwgAWsENPVYrw2ADX49vtPxalq0hZpWm0Al2Ouq2JCT3+7Zsm+YItcA499o+R/L+8w8mj2z1bQDqYLYZTqOy/BtoZSBlWnmnOnDak2pyZhQVVKk5xWGyqy8NWfQtlnbkQPdZtBhwt+dDNmOpBx3xjrcKRHUeitPgbprDWzvpCRiXC8wcf7gRR7+OouVUq2Juo4NINRKq1dr/4SN0bBY2T6ESYV6K8Shr/4GCZe+Zo0S3DK3ZTeqqWh7E7hDbUnTXEuD21rpiR4IAy6cT2+DTB96K02/Ke/q2eqi1idQtewxoxbvUZpuWjItLAsaOhbu1LcLshM3h0=",
+      "size": 96884363,
       "priority": 100,
       "label": "GitHub Release"
     }
   ],
-  "signature": "GlaH7Fk+cYDy8u8vy1XxCeJUW+MbM8GbV2S6w7+1qaiOY/+YKA70Gegu9oC+6VX1SYCNV9yycAjSNqx9zXerRJXHgZceH3aDWX6NUfgsjnSLsOYBEgSnRqntPq77ntDi1X2yFQTuI0dWg/5rk+HphWgwHWv6CUh2fuRXTb7E/J1zF4yMfMMu/6iiYS6nwJevDFbRwe01VojYiBxi70dgqwCj1/3Qh7Kx5YrzQseZjuGFixi1AFYohgMSVTbKrALMuqhJChmeXpZZTWrWGqh93LT4VBwXt7BgrDQ8/K/n6xdJHKgWl4i5lSfWBd20P4VMuwpMWxgdWRzyk21XtvOGpLBsYt2nzJhi+W9dudEjbNSr1BUDX5D6byHYHp/NgdSL0oH1U8ETxi6iPe5PVme+WvUidsoOEjcMSUVyr3MLkk4RslB5zy/657oBFy39Fc44V8nNawMDLPGWirmNLuGJGAchCaGZrnf3tL+fmwwMe052Y9LQynpqzrD+CGAsYPcOi6SBsn/H4YGrN1/nOdVAWfkApsxFjU16Pz6ySsoWqzeSLbwgDUczgfHHDTSCNLHRYdC4p6jU233mgsceLRhvBNEbPYa4K6aqnXz71bVraP1UzOK9Z0ZrV9thd/bH60/GAtQbGLuOrWLcUTm81g/arLwWvDJAWX6ZXXw32tuEVH8="
+  "signature": "iLiW1FrQG4RvmicrmazrhLzlVhpkyflwyAHqGfYfY4FTtgXg1yXiBOaW1lNTkplD9vejmmq3ups4xr8Ck1Q6647yfAnzh1ViZVgl1rl6CMhtmIN4+BQB0efIWjmK+PHNyhY1UZts8sIzMC7l+gDi1377GthUWOqlKYbdyBJXyMg/4dzVaGjlzL6MU29r66dI9q8oTq9IZXq0gjYE94ifIQqaGHr8mIuXe0beR8Y3T0OvE4N0yqxVZyD/XKUqTEIEuLDb3Ug54FQ8l4YJ/0W9k4sRozbhj/7I+K+IrB6UpBuEakIloNTafbGTe1HbY5sYAWklyD9Ob9XAsvnvfBRjXodUcFTx9O3t9KO6Y4Z1lbOAeOQ5UbTE/Bn7frHjWHQFgmRsl7wCdPsSHM+tMu8CfYcsjciNn+Gy9HVFRR5/sEKIOnYkDTR6Z8IVeCp/HMS6pXw9D9DMHR32YUWH0sSo7kzj34PhtSqtv22zWvgKUuf1LtGJvakvYxZ/CTNaucoMYscf4kH5ie/clKDQQplVXMVG+SUQFrA3fK9vc+XuMO3rldqpmWmXekF5mcn9545OIN79G//p6tcUFPq8/tu/Vb79z8Wsk/UT2PCJdxd35b0uihiS8cQrJA/XBjwpc9logB4foW56zYAOFxt1gb91/D3F132ylSGT37FLazOg6Pw="
 }

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "3.1",
-  "releaseNotes": "新增万象宝盘查询系统",
-  "publishedAt": "2026-09-14T12:11:38+08:00",
+  "version": "3.1.1",
+  "releaseNotes": "",
+  "publishedAt": "2026-09-14T12:30:46+08:00",
   "bootstrapUrls": [
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
@@ -13,7 +13,7 @@
   ],
   "packages": [
     {
-      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.1/XunxianDpkViewer.exe",
+      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.1.1/XunxianDpkViewer.exe",
       "sha256": "",
       "signature": "",
       "size": 0,

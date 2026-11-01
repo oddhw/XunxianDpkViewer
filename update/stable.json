@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "3.1.1",
+  "version": "3.2",
   "releaseNotes": "",
-  "publishedAt": "2026-09-14T12:30:46+08:00",
+  "publishedAt": "2026-11-01T20:18:29+08:00",
   "bootstrapUrls": [
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
     "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
@@ -13,13 +13,13 @@
   ],
   "packages": [
     {
-      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.1.1/XunxianDpkViewer.exe",
-      "sha256": "E58136416EB809148B93571B7AB71C7C3541D2DF4C00A8C7CC3EEC8AE13B92D4",
-      "signature": "n8svCxsmljdVZAliPvmTSYTyLm8CQShzRmGRF5weOQY2ZLE9UKBLD4B0eDevFcwaNZ4dlPoe3Qkuer2k4iQJMnIziOwGMYlckD2++ZWViBdISxDHWShYVc5c2bf+lozgUtXZE4vAbkGa1g/L7AW+sclTKfM929FMeMPK9Ryw0KoeevIC3lFoRE2YJq7qmsk7cyrnmBtKxlw6xFiO0qPyGnArH/ZdXf5bxLrZEos8bRDO0ysIPX/WBz0zW71cZxOEqHtgNURwQz43I4l9HXZ8+hBJzxoYn7nwpmY2OE1X9+ziBnawTzsa/xn80QQJAo+R3whe/Db92O8QDlBKZNqWRCTMa/w7kVJxpyDwgAWsENPVYrw2ADX49vtPxalq0hZpWm0Al2Ouq2JCT3+7Zsm+YItcA499o+R/L+8w8mj2z1bQDqYLYZTqOy/BtoZSBlWnmnOnDak2pyZhQVVKk5xWGyqy8NWfQtlnbkQPdZtBhwt+dDNmOpBx3xjrcKRHUeitPgbprDWzvpCRiXC8wcf7gRR7+OouVUq2Juo4NINRKq1dr/4SN0bBY2T6ESYV6K8Shr/4GCZe+Zo0S3DK3ZTeqqWh7E7hDbUnTXEuD21rpiR4IAy6cT2+DTB96K02/Ke/q2eqi1idQtewxoxbvUZpuWjItLAsaOhbu1LcLshM3h0=",
-      "size": 96884363,
+      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.2/XunxianDpkViewer.exe",
+      "sha256": "F2B9907A23DAABB89B57D8A97F75BD0264560B85EFF49C479DFBD2D67888C73F",
+      "signature": "l+4H+wNGARbj7Y4H/04Ya9cX2Bd1Dr0SqVaaEhOv04yozDn5BNReUrmvfbWQxf5vDeYEc8Yi6HRlUSnnJYBUx/0CVgg3bVAqK/u9JHVdebnIcCpRKgkmtQEA8zaLp78MPtg0MQ2aNlA7OPC2puZ+fVr6C9ZmoTc4QB8dMVpL+0csDRTGS3TtvNW9sOU07XGn/WsJ56Sn4LrPYAnhV9GUrG5jt9pI9oxPUgRcPkiV6HmaS4cqdr2IQn1/FzZIaTJsIU9GuUZM7PGpReINvOhm48dvbTr8KYaOMxDiCsgko50HknevuJKw1Gib1nt2OixSfpXJ/6vWYNPMfRDdqlzHXui7P0dFgtKeOK4M9DD1dC2yL2uCZWmTFE4ykSiUyHoraZ78FrQSF1Ed6IL2A93tqLWP7yD30mdAM2M5uellJHP/sBj+2mtBnsm0hz55eqZbh9EuVbOR+buHzeNcXCxSGz13kdq/l6mc683n2sKewu00idYBwErJVUYhmHPhYv003bgmj0jnwN6OziIUQrBeFbT/gyNaW8viaT0ecFLya8ePGNkbFepRWSr/5COZUprZ8Q4BRFzJEoBve9SHIkp5MJzGgGG/+ltP+mB2ykcn6WAfCjmdFQNtDJU/7JdwRbnaFK7SprFRj1WIx/WlIMl0Fnzwx0aAkkM96dlvpQAUQYk=",
+      "size": 96869341,
       "priority": 100,
       "label": "GitHub Release"
     }
   ],
-  "signature": "iLiW1FrQG4RvmicrmazrhLzlVhpkyflwyAHqGfYfY4FTtgXg1yXiBOaW1lNTkplD9vejmmq3ups4xr8Ck1Q6647yfAnzh1ViZVgl1rl6CMhtmIN4+BQB0efIWjmK+PHNyhY1UZts8sIzMC7l+gDi1377GthUWOqlKYbdyBJXyMg/4dzVaGjlzL6MU29r66dI9q8oTq9IZXq0gjYE94ifIQqaGHr8mIuXe0beR8Y3T0OvE4N0yqxVZyD/XKUqTEIEuLDb3Ug54FQ8l4YJ/0W9k4sRozbhj/7I+K+IrB6UpBuEakIloNTafbGTe1HbY5sYAWklyD9Ob9XAsvnvfBRjXodUcFTx9O3t9KO6Y4Z1lbOAeOQ5UbTE/Bn7frHjWHQFgmRsl7wCdPsSHM+tMu8CfYcsjciNn+Gy9HVFRR5/sEKIOnYkDTR6Z8IVeCp/HMS6pXw9D9DMHR32YUWH0sSo7kzj34PhtSqtv22zWvgKUuf1LtGJvakvYxZ/CTNaucoMYscf4kH5ie/clKDQQplVXMVG+SUQFrA3fK9vc+XuMO3rldqpmWmXekF5mcn9545OIN79G//p6tcUFPq8/tu/Vb79z8Wsk/UT2PCJdxd35b0uihiS8cQrJA/XBjwpc9logB4foW56zYAOFxt1gb91/D3F132ylSGT37FLazOg6Pw="
+  "signature": "hfpt6HCsQx106p0bagx20Pj/rMLkgv2qWeTSzpRn7EuhDzw5o25QzoVsIZ9YC9hCw8VPmSEiHc8SeACI4QWLPW05Iv348YXl1JWLnFWaFnhm+p37Vl9QrayU9UFYWaanHdziQLYOuwVtAsL7Nwez70E7elQSkN+O3/7Mr1nGN78AfMsZJeznv6bJRdXiV8JGazloCff3uxEpP/U3dARAa+8/6II25vYuQpkgV7QQ82SDZ3qMpJvMtuC94+QYaEuL0SEvN8l8+Hu35bU2O01O3QvYMlsWqAReTttI1l0KAaO3IztAdRI58IVWAQxyL8lkNes8KvPA32OEbBfqpk+b5lBXr2Z+j5QGucjR1ZNe7GxGWxLjfTvT0sW4KBto0nb9gwZXnzTGoiumjUhXBzfSCalJwmxkgVnC9ea1f2xWT8lYEm2r4UsIekgyO53OJ7gH1jN3mEsSZ1tL96Zw4ZcZMYOKub1xoB5LHkJ3CdrFRtRC7rDm8OV4O0zF7PBpCgjwWGAgeJ0S32zDwyMNBdXUztz5f6nQgMXA41mrXQAa3vOpmihza3n0T80VsAPvL2hR6brvmNqEEu1MN0wHTDwisPqBoVKRrm3AeNSy3vexInlu5ZhcK7kWuSDEmS5MSdgFTM7j8VwpMZVrb38zEAYMI+Zcdn4GJwIg/Us0Mx2b8fU="
 }

@@ -126,6 +126,18 @@ function Wait-ForValidLog {
     throw "The restarted application did not validate the signed manifest in time."
 }
 
+function Read-UpdateLogFrom {
+    param([long]$Offset)
+    if (-not (Test-Path -LiteralPath $updateLog)) { return "" }
+    $stream = [IO.File]::Open($updateLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+        [void]$stream.Seek($Offset, [IO.SeekOrigin]::Begin)
+        $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    }
+    finally { $stream.Dispose() }
+}
+
 try {
     $target = Join-Path $testRoot "RenamedViewer.exe"
     [IO.File]::WriteAllBytes($target, [byte[]](1, 2, 3, 4))
@@ -168,25 +180,33 @@ try {
         [IO.FileShare]::Read)
     try {
         $recoveryProcess = Start-Process -FilePath $packageFullPath -ArgumentList $recoveryArguments -PassThru -WindowStyle Hidden
-        Start-Sleep -Seconds 12
+        $failureDeadline = [DateTime]::UtcNow.AddSeconds(45)
+        $failureObserved = $false
+        while ([DateTime]::UtcNow -lt $failureDeadline) {
+            if ((Read-UpdateLogFrom -Offset $logLength).Contains("更新失败：")) {
+                $failureObserved = $true
+                break
+            }
+            if ($recoveryProcess.HasExited) {
+                throw "The locked-file test exited without triggering a replacement failure."
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $failureObserved) {
+            throw "The locked-file test did not trigger a replacement failure in time."
+        }
     }
     finally {
         $targetLock.Dispose()
     }
-    $recoveryProcess.WaitForExit()
+    if (-not $recoveryProcess.WaitForExit(45000)) {
+        throw "The recovery updater did not exit in time."
+    }
     if ($recoveryProcess.ExitCode -ne 0) {
         throw "Recovery updater exited with code $($recoveryProcess.ExitCode)."
     }
     Wait-ForValidLog -After $startedAt
-    $newLog = if (Test-Path -LiteralPath $updateLog) {
-        $stream = [IO.File]::Open($updateLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-        try {
-            [void]$stream.Seek($logLength, [IO.SeekOrigin]::Begin)
-            $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
-            try { $reader.ReadToEnd() } finally { $reader.Dispose() }
-        }
-        finally { $stream.Dispose() }
-    } else { "" }
+    $newLog = Read-UpdateLogFrom -Offset $logLength
     if ($newLog -notmatch "RECOVERY_RESTARTED") {
         throw "The forced replacement failure did not restart the recovered version."
     }

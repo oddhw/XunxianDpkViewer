@@ -66,7 +66,11 @@ public sealed partial class GameInfoWindow : Window
         _equipmentFireTimer = DispatcherQueue.CreateTimer();
         _equipmentFireTimer.Interval = TimeSpan.FromMilliseconds(20);
         _equipmentFireTimer.Tick += EquipmentFireTimer_Tick;
-        Closed += (_, _) => _equipmentFireTimer.Stop();
+        Closed += (_, _) =>
+        {
+            _talismanViewClosed = true;
+            _equipmentFireTimer.Stop();
+        };
 
         string iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Xunxian.ico");
         if (File.Exists(iconPath))
@@ -135,13 +139,15 @@ public sealed partial class GameInfoWindow : Window
         bool isEquipment = category.Id.Equals("equipment", StringComparison.Ordinal);
         bool isYinYang = category.Id.Equals("yinyang", StringComparison.Ordinal);
         bool isWanxiang = category.Id.Equals("wanxiang", StringComparison.Ordinal);
-        TimelineView.Visibility = isWeapon || isEquipment || isYinYang || isWanxiang
+        bool isTalisman = category.Id.Equals("talisman", StringComparison.Ordinal);
+        TimelineView.Visibility = isWeapon || isEquipment || isYinYang || isWanxiang || isTalisman
             ? Visibility.Collapsed
             : Visibility.Visible;
         WeaponView.Visibility = isWeapon ? Visibility.Visible : Visibility.Collapsed;
         EquipmentView.Visibility = isEquipment ? Visibility.Visible : Visibility.Collapsed;
         YinYangView.Visibility = isYinYang ? Visibility.Visible : Visibility.Collapsed;
         WanxiangView.Visibility = isWanxiang ? Visibility.Visible : Visibility.Collapsed;
+        TalismanView.Visibility = isTalisman ? Visibility.Visible : Visibility.Collapsed;
         InfoSearchBox.Visibility = isYinYang || isWanxiang ? Visibility.Collapsed : Visibility.Visible;
         CategoryCountBadge.Visibility = isYinYang || isWanxiang ? Visibility.Collapsed : Visibility.Visible;
         InfoSearchBox.PlaceholderText = string.Empty;
@@ -162,6 +168,10 @@ public sealed partial class GameInfoWindow : Window
         else if (isWanxiang)
         {
             ConfigureWanxiangView();
+        }
+        else if (isTalisman)
+        {
+            ConfigureTalismanView();
         }
         else
         {
@@ -190,6 +200,12 @@ public sealed partial class GameInfoWindow : Window
         if (_selectedCategory.Id.Equals("equipment", StringComparison.Ordinal))
         {
             ApplyEquipmentFilter();
+            return;
+        }
+
+        if (_selectedCategory.Id.Equals("talisman", StringComparison.Ordinal))
+        {
+            ApplyTalismanFilter();
             return;
         }
 
@@ -2583,7 +2599,9 @@ public sealed class GameItemViewModel
     private static readonly BitmapImage? ClientTooltipFrame = LoadBitmap(
         Path.Combine(AppContext.BaseDirectory, "Assets", "Client", "frm_tip.png"));
 
-    public GameItemViewModel(GameInfoRecord record, string? equipmentStageName = null)
+    private RichTextBlock? _tooltipContent;
+
+    public GameItemViewModel(GameInfoRecord record, string? equipmentStageName = null, bool deferTooltip = false)
     {
         Record = record;
         Name = record.Name;
@@ -2592,6 +2610,10 @@ public sealed class GameItemViewModel
         CardMetaText = string.Join(
             " · ",
             new[] { record.Weapon?.LevelLabel, record.Group }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+        TalismanMetaText = string.Join(
+            " · ",
+            new[] { record.Talisman?.RankText, record.Group, record.Tooltip?.Level }
                 .Where(value => !string.IsNullOrWhiteSpace(value)));
         string equipmentProfession = GameProfessionFormatter.NormalizeRequirement(
             record.Tooltip?.RequiredProfessions.Count > 0
@@ -2613,7 +2635,10 @@ public sealed class GameItemViewModel
         GameItemTooltip? tooltip = record.Tooltip;
         QualityBrush = Brush(GameTooltipFormatter.ResolveQualityColor(tooltip?.Quality));
         TooltipFrameSource = ClientTooltipFrame;
-        TooltipContent = CreateTooltipContent(record);
+        if (!deferTooltip)
+        {
+            _tooltipContent = CreateTooltipContent(record);
+        }
     }
 
     public GameInfoRecord Record { get; }
@@ -2621,13 +2646,14 @@ public sealed class GameItemViewModel
     public string Group { get; }
     public string Summary { get; }
     public string CardMetaText { get; }
+    public string TalismanMetaText { get; }
     public string EquipmentCardMetaText { get; }
     public BitmapImage? ImageSource { get; }
     public Visibility ImageVisibility { get; }
     public Visibility FallbackVisibility { get; }
     public Brush QualityBrush { get; }
     public BitmapImage? TooltipFrameSource { get; }
-    public RichTextBlock TooltipContent { get; }
+    public RichTextBlock TooltipContent => _tooltipContent ??= CreateTooltipContent(Record);
 
     public static RichTextBlock CreateTooltipContent(
         GameInfoRecord record,
@@ -2647,7 +2673,7 @@ public sealed class GameItemViewModel
         GameWanxiangTooltipOverlay overlay) =>
         CreateTooltipContent(GameTooltipFormatter.FormatWanxiang(record, overlay));
 
-    private static RichTextBlock CreateTooltipContent(IReadOnlyList<GameTooltipLine> tooltipLines)
+    public static RichTextBlock CreateTooltipContent(IReadOnlyList<GameTooltipLine> tooltipLines)
     {
         var content = new RichTextBlock
         {

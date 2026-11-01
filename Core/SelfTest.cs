@@ -150,12 +150,15 @@ public static class SelfTest
         progress("加载游戏资料索引");
         GameInfoRepository repository = GameInfoRepository.Load(resourceRoot);
         progress("验证游戏资料分类");
-        string[] expectedCategories = { "weapon", "equipment", "yinyang", "wanxiang" };
+        string[] expectedCategories = { "weapon", "equipment", "talisman", "yinyang", "wanxiang" };
         string[] missing = expectedCategories
             .Where(id => repository.Categories.All(category => !category.Id.Equals(id, StringComparison.Ordinal)))
             .ToArray();
         if (missing.Length > 0)
             throw new InvalidDataException($"Game information categories are missing: {string.Join(", ", missing)}");
+
+        progress("验证客户端法宝职业、显示阶数与炼化条目");
+        CheckTalismans(report, repository.Talismans, resourceRoot);
 
         progress("验证客户端阴阳玉附魂、附魔与附灵数据");
         GameYinYangCatalog yinYang = repository.YinYang;
@@ -480,6 +483,7 @@ public static class SelfTest
             throw new InvalidDataException($"Game information categories are empty: {string.Join(", ", empty.Select(category => category.Name))}");
 
         progress("验证装备职业、洗炼与强化资料");
+        report.Append(VerifyEquipmentProfessions(repository, resourceRoot));
         GameInfoCategory equipmentCategory = repository.Categories
             .First(category => category.Id.Equals("equipment", StringComparison.Ordinal));
         string[] expectedEquipmentStages =
@@ -1099,6 +1103,230 @@ public static class SelfTest
             $"{enhancement.CostCount:N0} client cost rows; {wuhunWeapon.Name}; " +
             $"{enhancementRows.Count:N0} capped levels through {derivativeEnhancement.RankName}; " +
             $"transition material {derivativeCost.MaterialText}; tooltip overlay passed");
+    }
+
+    internal static string VerifyEquipmentProfessions(GameInfoRepository repository, string resourceRoot)
+    {
+        using var reader = new DpkReader(Path.Combine(Directory.GetParent(resourceRoot)!.FullName, "mb.dpk"));
+        Dictionary<string, DpkEntry> entries = reader.ReadEntries().ToDictionary(entry => entry.Path, StringComparer.OrdinalIgnoreCase);
+        string[][] Rows(string path) => Encoding.GetEncoding("GB18030").GetString(reader.Extract(entries[path]))
+            .Split('\n').Select(line => line.TrimEnd('\r').Split('\t')).ToArray();
+        Dictionary<string, string> families = Rows("object/init_profession.txt")
+            .Where(row => row.Length > 18 && row[17] is "1" or "2" or "3" or "4")
+            .GroupBy(row => row[17]).ToDictionary(group => group.Key, group => group.First()[18]);
+        if (families.GetValueOrDefault("3") != "符咒师" || families.GetValueOrDefault("4") != "法师")
+        {
+            throw new InvalidDataException("Client profession-family definitions have changed.");
+        }
+        var items = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (string path in new[] { "item/item_list.txt", "item/item_list2.txt", "item/item_list3.txt" })
+        {
+            foreach (string[] row in Rows(path).Where(row => row.Length > 11 && int.TryParse(row[0], out _)))
+            {
+                items[row[0]] = row;
+            }
+        }
+        var report = new StringBuilder();
+        foreach (GameInfoCategory category in repository.Categories.Where(category => category.Id is "equipment" or "weapon"))
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (GameInfoRecord record in category.Stages.SelectMany(stage => stage.Records))
+            {
+                string[] codes = items[record.Id][9].Split('*');
+                string? familyCode = codes.FirstOrDefault(families.ContainsKey);
+                if (familyCode is null)
+                {
+                    continue;
+                }
+                string family = families[familyCode];
+                string[] expected = codes.Contains("5") ? new[] { family, "天狐" } : new[] { family };
+                string expectedGroup = category.Id == "equipment"
+                    ? string.Join(" / ", expected) : family.Replace("符咒师", "符咒", StringComparison.Ordinal) + "系";
+                string requirement = "需要：" + string.Join(' ', expected);
+                if (record.Tooltip is null || !record.Tooltip.RequiredProfessions.SequenceEqual(expected) ||
+                    record.Group != expectedGroup || !GameTooltipFormatter.Format(record)
+                        .Any(line => string.Concat(line.Spans.Select(span => span.Text)) == requirement))
+                {
+                    throw new InvalidDataException($"Client profession mismatch: {category.Id}/{record.Id}/{record.Name}; expected {requirement}.");
+                }
+                counts[family] = counts.GetValueOrDefault(family) + 1;
+            }
+            if (families.Values.Any(family => counts.GetValueOrDefault(family) == 0))
+            {
+                throw new InvalidDataException($"A client profession family is missing from {category.Id}.");
+            }
+            report.AppendLine($"{category.Id}: " + string.Join(", ", counts.Select(pair => $"{pair.Key}={pair.Value}")));
+        }
+        report.AppendLine("EQUIPMENT PROFESSION CHECK PASSED");
+        return report.ToString();
+    }
+
+    internal static string VerifyTalismans(GameTalismanCatalog catalog, string resourceRoot)
+    {
+        var report = new StringBuilder();
+        CheckTalismans(report, catalog, resourceRoot);
+        return report.ToString();
+    }
+
+    private static void CheckTalismans(StringBuilder report, GameTalismanCatalog catalog, string resourceRoot)
+    {
+        using var mbReader = new DpkReader(Path.Combine(Directory.GetParent(resourceRoot)!.FullName, "mb.dpk"));
+        IReadOnlyList<DpkEntry> entries = mbReader.ReadEntries();
+        var expectedIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string path in new[] { "item/item_list.txt", "item/item_list2.txt", "item/item_list3.txt" })
+        {
+            DpkEntry entry = entries.Single(entry => entry.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+            string text = Encoding.GetEncoding("GB18030").GetString(mbReader.Extract(entry));
+            foreach (string line in text.Split('\n'))
+            {
+                string[] fields = line.TrimEnd('\r').Split('\t');
+                if (fields.Length > 2 && fields[2] == "101" && int.TryParse(fields[0], out _))
+                {
+                    expectedIds.Add(fields[0]);
+                }
+            }
+        }
+
+        if (!expectedIds.SetEquals(catalog.Items.Select(item => item.Id)) ||
+            catalog.Items.Select(item => item.Id).Distinct().Count() != catalog.Items.Count)
+        {
+            throw new InvalidDataException("Talisman catalog does not match client item type 101.");
+        }
+
+        GameInfoRecord newest = catalog.Items.Single(item => item.Id == "32408");
+        GameTalismanInfo info = newest.Talisman!;
+        if (newest.Name != "天罡之沧海鱼龙灯" || info.Level != 260 || info.DisplayRank != 14 ||
+            info.RankText != "十四阶法宝" || info.ProfessionId != 13 || info.Profession != "彩舞天狐" ||
+            newest.Tooltip is not { Status.Length: 0 })
+        {
+            throw new InvalidDataException(
+                $"Talisman display mismatch: {newest.Name}; level={info.Level}; rank={info.DisplayRank}/{info.RankText}; " +
+                $"profession={info.ProfessionId}/{info.Profession}; status={newest.Tooltip?.Status}.");
+        }
+
+        if (newest.Weapon is not null || newest.Tooltip is null ||
+            !newest.Tooltip.RequiredProfessions.SequenceEqual(new[] { "彩舞" }) ||
+            !newest.Tooltip.BaseRows.Contains(new GameInfoDetailRow("力量", "+504")) ||
+            !newest.Tooltip.BaseRows.Contains(new GameInfoDetailRow("体魄", "+441")) ||
+            !newest.Tooltip.EquipRows.Contains("生命恢复提高5点") ||
+            newest.Tooltip.BaseRows[0].Label != "力量" || newest.Tooltip.Quality != "#FFFF6A00")
+        {
+            throw new InvalidDataException("Talisman base attributes or class restriction differ from the client.");
+        }
+
+        if (info.RefinementRows.Count != 13 ||
+            !info.RefinementRows[0].StartsWith("江海濯龙诀·天罡：", StringComparison.Ordinal) ||
+            info.RefinementRows[1] != "增强属性：体魄+1800,攻击力+300000" ||
+            !info.RefinementRows[^1].StartsWith("仙缘属性：筋骨+3640,防御+1174000", StringComparison.Ordinal) ||
+            info.RefinementRows.Any(row => row.StartsWith('"') || row.EndsWith('"')))
+        {
+            throw new InvalidDataException("Talisman skill and refinement descriptions are incomplete or joined to the wrong item.");
+        }
+
+        string tooltipText = string.Join('\n', GameTooltipFormatter.Format(newest)
+            .Select(line => string.Concat(line.Spans.Select(span => span.Text))));
+        if (!tooltipText.Contains("十四阶法宝", StringComparison.Ordinal) ||
+            !tooltipText.Contains("需要：彩舞", StringComparison.Ordinal) ||
+            tooltipText.Contains("武魂", StringComparison.Ordinal) ||
+            !tooltipText.Contains("[2]增强属性：", StringComparison.Ordinal) ||
+            !tooltipText.Contains("成长：61段/61段 100%", StringComparison.Ordinal) ||
+            tooltipText.IndexOf("[13]", StringComparison.Ordinal) > tooltipText.IndexOf("售店价格", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Talisman tooltip does not integrate the client growth and numbered attributes in order.");
+        }
+
+        using var guiReader = new DpkReader(Path.Combine(resourceRoot, "gui.dpk"));
+        DpkEntry icon = guiReader.ReadEntries().Single(entry =>
+            entry.Path.Equals("icon/item/fb/fb2644.png", StringComparison.OrdinalIgnoreCase));
+        if (newest.ImagePath is null || !File.Exists(newest.ImagePath) ||
+            !SHA256.HashData(guiReader.Extract(icon)).SequenceEqual(SHA256.HashData(File.ReadAllBytes(newest.ImagePath))))
+        {
+            throw new InvalidDataException("Talisman icon does not match the client item icon.");
+        }
+
+        GameInfoRecord bow = catalog.Items.Single(item => item.Id == "32399");
+        GameTalismanInfo bowInfo = bow.Talisman!;
+        if (bowInfo is not { MaxGrowth: 61, TalentTreeId: 570, SpiritConversionRate: 5 } || bowInfo.Talents.Count != 13 ||
+            bowInfo.Talents[0] is not { Id: 2685, Name: "息壤护体", X: 40, Y: 30, MaxLevel: 10 } ||
+            bowInfo.Talents[^1] is not { Id: 2707, X: 120, Y: 230, RequiredPoints: 60, MaxLevel: 1 })
+        {
+            throw new InvalidDataException("Talisman talent tree, native positions or growth caps differ from the client.");
+        }
+        GameTalismanTalent shield = bowInfo.Talents[0];
+        if (!shield.EffectAt(1).Contains("抵抗最终伤害提高15%", StringComparison.Ordinal) ||
+            !shield.EffectAt(10).Contains("抵抗最终伤害提高150%", StringComparison.Ordinal) ||
+            shield.EffectAt(10).Contains("%s", StringComparison.Ordinal) ||
+            shield.EffectAt(10).Contains("%%", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Talent effect parameters were not applied at their actual client levels.");
+        }
+        DpkEntry clientTalentGroups = entries.Single(entry => entry.Path.Equals("skill/talent_group.txt", StringComparison.OrdinalIgnoreCase));
+        Dictionary<string, string[]> talentRows = Encoding.GetEncoding("GB18030").GetString(mbReader.Extract(clientTalentGroups))
+            .Split('\n').Select(line => line.TrimEnd('\r').Split('\t')).Where(row => row.Length > 6)
+            .GroupBy(row => row[1]).ToDictionary(group => group.Key, group => group.Last());
+        foreach (GameTalismanTalent talent in bowInfo.Talents)
+        {
+            string[] row = talentRows[talent.Id.ToString()];
+            DpkEntry talentIcon = guiReader.ReadEntries().Single(entry => entry.Path.Equals(
+                $"icon/talent/{row[4]}.png",
+                StringComparison.OrdinalIgnoreCase));
+            if (talent.Name != row[0] || $"{talent.X}*{talent.Y}" != row[5] || talent.MaxLevel.ToString() != row[6] ||
+                talent.IconPath is null || !SHA256.HashData(guiReader.Extract(talentIcon))
+                    .SequenceEqual(SHA256.HashData(File.ReadAllBytes(talent.IconPath))))
+            {
+                throw new InvalidDataException($"Talent {talent.Id} uses the wrong client icon.");
+            }
+        }
+        var state = new GameTalismanSelection { Growth = 61, ActivatedAttributes = 11 };
+        if (state.Learn(bowInfo, bowInfo.Talents[^1]))
+        {
+            throw new InvalidDataException("Talent point requirements were ignored.");
+        }
+        foreach ((int id, int count) in new[] { (2693, 10), (2697, 10), (2694, 10), (2691, 5), (2695, 5),
+                     (2699, 5), (2692, 5), (2696, 5), (2700, 5), (2707, 1) })
+        {
+            for (int point = 0; point < count; point++)
+            {
+                if (!state.Learn(bowInfo, bowInfo.Talents.Single(talent => talent.Id == id)))
+                {
+                    throw new InvalidDataException($"Valid client talent allocation was rejected at {id}/{point}.");
+                }
+            }
+        }
+        if (state.UsedPoints != 61 || state.Learn(bowInfo, shield))
+        {
+            throw new InvalidDataException("Talent allocation exceeds the selected growth-stage budget.");
+        }
+        GameTooltipLine[] refinement = GameTooltipFormatter.FormatTalisman(bow, state)
+            .Where(line => line.Spans.Any(span => span.Text.StartsWith('['))).ToArray();
+        if (refinement.Length != 13 || refinement.Take(11).Any(line => line.Spans[0].Color != GameTooltipFormatter.EquipColor) ||
+            refinement.Skip(11).Any(line => line.Spans[0].Color != GameTooltipFormatter.HintColor))
+        {
+            throw new InvalidDataException("Inactive talisman attributes are not gray in the integrated tooltip.");
+        }
+        state.TalentLevels[2693]--;
+        state.Normalize(bowInfo);
+        if (state.TalentLevels.ContainsKey(2707))
+        {
+            throw new InvalidDataException("Removing prerequisite points leaves an invalid final talent active.");
+        }
+        if (catalog.Text("title") != "本命法宝" || catalog.Text("growth") != "成长阶段：%d/%d" ||
+            catalog.Text("talents") != "法宝天赋技能" || catalog.Text("reset") != "法宝重置" ||
+            catalog.Text("activated") != "激活属性")
+        {
+            throw new InvalidDataException("Original client talent interface strings were not loaded.");
+        }
+
+        GameInfoRecord novice = catalog.Items.Single(item => item.Id == "1921");
+        if (novice.Name != "葫芦" || novice.Talisman is not { Level: 1, ProfessionId: 5 } ||
+            catalog.Items.Select(item => item.Talisman!.ProfessionId).Where(id => id > 0).Distinct().Count() != 17 ||
+            catalog.Name != "法宝" || catalog.AllText != "全部" || catalog.LevelLabel != "等级" ||
+            catalog.ProfessionLabel != "职业" || catalog.RefinementTitle != "法宝炼化")
+        {
+            throw new InvalidDataException("Talisman novice items, professions or original client UI labels are missing.");
+        }
+
+        report.AppendLine($"Talisman client data: {catalog.Items.Count} items; 17 professions; {newest.Name}, {info.RankText}, level {info.Level}; {info.RefinementRows.Count} refinement rows.");
     }
 
     private static void CheckFile(

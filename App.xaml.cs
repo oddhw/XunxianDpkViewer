@@ -66,6 +66,22 @@ public partial class App : Application
                 Exit();
                 return;
             }
+#if DEBUG
+            string? talismanViewArgument = commandLineArgs.FirstOrDefault(argument =>
+                argument.StartsWith("--verify-talisman-view=", StringComparison.OrdinalIgnoreCase));
+            if (talismanViewArgument is not null)
+            {
+                string outputFolder = talismanViewArgument[(talismanViewArgument.IndexOf('=') + 1)..].Trim('"');
+                string? resourceArgument = commandLineArgs.FirstOrDefault(argument =>
+                    argument.StartsWith("--resource-folder=", StringComparison.OrdinalIgnoreCase));
+                string? resourceFolder = resourceArgument?[(resourceArgument.IndexOf('=') + 1)..].Trim('"');
+                var gameInfoWindow = new GameInfoWindow(resourceFolder);
+                _window = gameInfoWindow;
+                gameInfoWindow.Activate();
+                _ = gameInfoWindow.VerifyTalismanViewAsync(outputFolder);
+                return;
+            }
+#endif
             UpdateInstaller.ScheduleCleanup(commandLineArgs);
             var mainWindow = new MainWindow();
             _window = mainWindow;

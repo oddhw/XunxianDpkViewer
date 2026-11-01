@@ -311,6 +311,109 @@
                             </ItemsControl>
                         </ScrollViewer>
 
+                        <Grid x:Name="TalismanView" Visibility="Collapsed" Margin="18,16,18,20" RowSpacing="14">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="190" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="190" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="TalismanLevelLabel" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <ComboBox x:Name="TalismanLevelBox" Grid.Column="1" HorizontalAlignment="Stretch" FontFamily="{StaticResource ClientGameFont}" DisplayMemberPath="Name" SelectionChanged="TalismanFilter_SelectionChanged" />
+                                <TextBlock x:Name="TalismanProfessionLabel" Grid.Column="2" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <ComboBox x:Name="TalismanProfessionBox" Grid.Column="3" HorizontalAlignment="Stretch" FontFamily="{StaticResource ClientGameFont}" DisplayMemberPath="Name" SelectionChanged="TalismanFilter_SelectionChanged" />
+                            </Grid>
+                            <Grid Grid.Row="1" ColumnSpacing="18" SizeChanged="TalismanItemLayout_SizeChanged">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition x:Name="TalismanListColumn" Width="230" MinWidth="180" MaxWidth="260" />
+                                    <ColumnDefinition Width="1.35*" MinWidth="280" />
+                                </Grid.ColumnDefinitions>
+                                <ListView x:Name="TalismanList" SelectionMode="Single" IsItemClickEnabled="False" ItemContainerStyle="{StaticResource GameItemStyle}" SelectionChanged="TalismanList_SelectionChanged">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="10,8" MinHeight="68" ColumnSpacing="12" ToolTipService.Placement="Mouse">
+                                                <ToolTipService.ToolTip>
+                                                    <ToolTip Padding="0" Background="Transparent" BorderThickness="0" Tag="{Binding}" Opened="TalismanItemTooltip_Opened">
+                                                        <ToolTip.Template>
+                                                            <ControlTemplate TargetType="ToolTip">
+                                                                <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" />
+                                                            </ControlTemplate>
+                                                        </ToolTip.Template>
+                                                        <Grid MaxWidth="660" UseLayoutRounding="True" SizeChanged="TalismanTooltipFrame_SizeChanged">
+                                                            <Canvas IsHitTestVisible="False">
+                                                                <Image Source="{Binding TooltipFrameSource}" Stretch="Fill" NineGrid="12,12,13,13" />
+                                                            </Canvas>
+                                                            <ContentPresenter Margin="6,6,6,7" Content="{Binding TooltipContent}" />
+                                                        </Grid>
+                                                    </ToolTip>
+                                                </ToolTipService.ToolTip>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="46" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Image Source="{Binding ImageSource}" Width="46" Height="46" Stretch="Uniform" VerticalAlignment="Center" />
+                                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" Foreground="{Binding QualityBrush}" FontSize="16" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding TalismanMetaText}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <FontIcon x:Name="TalismanEmptyState" Glyph="&#xE721;" FontSize="30" Foreground="{StaticResource MutedTextBrush}" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                                <Grid x:Name="TalismanDetailArea" Grid.Column="1" RowSpacing="10">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <StackPanel Spacing="10">
+                                        <Grid ColumnSpacing="12" HorizontalAlignment="Left">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <TextBlock x:Name="TalismanGrowthLabel" FontSize="12" VerticalAlignment="Center" />
+                                                <NumberBox x:Name="TalismanGrowthBox" Width="120" Minimum="0" Maximum="0" Value="0" SmallChange="1" LargeChange="1" SpinButtonPlacementMode="Inline" ValueChanged="TalismanState_ValueChanged" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                                <TextBlock x:Name="TalismanActivatedLabel" FontSize="12" VerticalAlignment="Center" />
+                                                <NumberBox x:Name="TalismanActivatedBox" Width="120" Minimum="0" Maximum="0" Value="0" SmallChange="1" LargeChange="1" SpinButtonPlacementMode="Inline" ValueChanged="TalismanState_ValueChanged" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                    <ScrollViewer x:Name="TalismanSideBySideScroll" Grid.Row="1" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto" VerticalContentAlignment="Stretch" HorizontalContentAlignment="Left" SizeChanged="TalismanSideBySideScroll_SizeChanged">
+                                        <Grid x:Name="TalismanSideBySideLayout" ColumnSpacing="18">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition x:Name="TalismanAttributeColumn" Width="420" />
+                                                <ColumnDefinition x:Name="TalismanTalentColumn" Width="572" />
+                                            </Grid.ColumnDefinitions>
+                                            <ScrollViewer x:Name="TalismanDetailScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                <StackPanel x:Name="TalismanDetails" Spacing="8" HorizontalAlignment="Stretch" Margin="0,0,12,12">
+                                                    <Image x:Name="SelectedTalismanImage" Width="46" Height="46" Stretch="Uniform" HorizontalAlignment="Center" />
+                                                    <Grid x:Name="TalismanTooltipFrameBounds" UseLayoutRounding="True" SizeChanged="TalismanTooltipFrame_SizeChanged">
+                                                        <Canvas IsHitTestVisible="False">
+                                                            <Image x:Name="SelectedTalismanTooltipFrame" Stretch="Fill" NineGrid="12,12,13,13" />
+                                                        </Canvas>
+                                                        <ContentPresenter x:Name="SelectedTalismanTooltipHost" Margin="6,6,6,7" />
+                                                    </Grid>
+                                                </StackPanel>
+                                            </ScrollViewer>
+                                            <ScrollViewer x:Name="TalismanTalentScroll" Grid.Column="1" Margin="0,54,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top">
+                                                <ContentPresenter x:Name="TalismanTalentHost" HorizontalAlignment="Left" VerticalAlignment="Top" />
+                                            </ScrollViewer>
+                                        </Grid>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Grid>
+                        </Grid>
+
                         <Grid x:Name="YinYangView" Visibility="Collapsed" Margin="18,16,18,20" RowSpacing="12">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />

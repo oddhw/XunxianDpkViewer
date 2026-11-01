@@ -19,7 +19,8 @@ public sealed record GameClientInfoSnapshot(
     GameEquipmentWashCatalog EquipmentWash,
     GameEquipmentEnhancementCatalog EquipmentEnhancement,
     GameEquipmentUpgradeCatalog EquipmentUpgrades,
-    GameYinYangCatalog YinYang);
+    GameYinYangCatalog YinYang,
+    GameTalismanCatalog Talismans);
 
 public sealed record GameClientEquipmentTooltip(
     string ItemId,
@@ -30,7 +31,7 @@ public sealed record GameClientEquipmentTooltip(
     IReadOnlyList<string> FeatureRows,
     GameItemTooltip Tooltip);
 
-public static class GameClientInfoReader
+public static partial class GameClientInfoReader
 {
     private const int LevelsPerRank = 10;
 
@@ -39,8 +40,8 @@ public static class GameClientInfoReader
         {
             ["1*5"] = ("游侠系", new[] { "游侠", "天狐" }),
             ["2*5"] = ("力士系", new[] { "力士", "天狐" }),
-            ["3*5"] = ("法师系", new[] { "法师", "天狐" }),
-            ["4*5"] = ("符咒系", new[] { "符咒师", "天狐" })
+            ["3*5"] = ("符咒系", new[] { "符咒师", "天狐" }),
+            ["4*5"] = ("法师系", new[] { "法师", "天狐" })
         };
 
     static GameClientInfoReader()
@@ -112,6 +113,7 @@ public static class GameClientInfoReader
             texts,
             iconResolver,
             materialIcons);
+        GameTalismanCatalog talismans = ParseTalismans(mbReader, mbEntries, items, traits, texts, iconResolver);
 
         foreach ((string id, ClientWeaponMeta meta) in metadata)
         {
@@ -184,6 +186,14 @@ public static class GameClientInfoReader
         foreach ((string id, GameClientEquipmentTooltip equipment) in equipmentTooltips)
         {
             tooltips[id] = equipment.Tooltip;
+        }
+
+        foreach (GameInfoRecord talisman in talismans.Items)
+        {
+            if (talisman.Tooltip is not null)
+            {
+                tooltips[talisman.Id] = talisman.Tooltip;
+            }
         }
 
         var weapons = new List<GameInfoRecord>();
@@ -272,7 +282,8 @@ public static class GameClientInfoReader
             equipmentWash,
             equipmentEnhancement,
             equipmentUpgrades,
-            yinYang);
+            yinYang,
+            talismans);
     }
 
     private static GameWanxiangCatalog ParseWanxiang(
@@ -2860,14 +2871,14 @@ public static class GameClientInfoReader
             return ResolvePath($"icon/state/{fileName}.png");
         }
 
-        public string? ResolveClientText(string path, string key)
+        public string? ResolveClientText(string path, string key, bool stopAtMatch = false, bool isolatedEntry = false)
         {
             if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(key))
             {
                 return null;
             }
 
-            string cacheKey = $"text:{NormalizePath(path)}:{key}";
+            string cacheKey = $"text:{NormalizePath(path)}:{key}:{stopAtMatch}:{isolatedEntry}";
             if (_resolved.TryGetValue(cacheKey, out string? cached))
             {
                 return cached;
@@ -2882,11 +2893,51 @@ public static class GameClientInfoReader
             try
             {
                 string xml = Encoding.UTF8.GetString(_reader.Extract(entry)).Trim('\0', '\uFEFF');
-                string? value = XDocument.Parse(xml)
-                    .Descendants("string")
-                    .FirstOrDefault(element =>
-                        string.Equals(element.Attribute("name")?.Value, key, StringComparison.Ordinal))
-                    ?.Attribute("value")?.Value;
+                string? value = null;
+                if (isolatedEntry)
+                {
+                    // Some client language files contain malformed entries; parse the requested string alone.
+                    foreach (Match match in Regex.Matches(xml, "<string\\b(?:[^>\"']|\"[^\"]*\"|'[^']*')*/>"))
+                    {
+                        if (!match.Value.Contains(key, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+                        try
+                        {
+                            XElement element = XElement.Parse(match.Value);
+                            if (element.Attribute("name")?.Value == key)
+                            {
+                                value = element.Attribute("value")?.Value;
+                                break;
+                            }
+                        }
+                        catch (System.Xml.XmlException)
+                        {
+                        }
+                    }
+                }
+                else if (stopAtMatch)
+                {
+                    using var xmlReader = System.Xml.XmlReader.Create(new StringReader(xml));
+                    while (xmlReader.Read())
+                    {
+                        if (xmlReader.NodeType == System.Xml.XmlNodeType.Element && xmlReader.Name == "string" &&
+                            string.Equals(xmlReader.GetAttribute("name"), key, StringComparison.Ordinal))
+                        {
+                            value = xmlReader.GetAttribute("value");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    value = XDocument.Parse(xml)
+                        .Descendants("string")
+                        .FirstOrDefault(element =>
+                            string.Equals(element.Attribute("name")?.Value, key, StringComparison.Ordinal))
+                        ?.Attribute("value")?.Value;
+                }
                 value = value is null ? null : WebUtility.HtmlDecode(value);
                 _resolved[cacheKey] = value;
                 return value;

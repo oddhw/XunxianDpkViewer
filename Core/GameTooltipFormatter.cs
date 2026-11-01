@@ -56,6 +56,10 @@ public static class GameTooltipFormatter
         IReadOnlyList<GameTooltipSupplementLine>? supplementLines = null,
         IReadOnlyList<GameTooltipHintLine>? hintLines = null)
     {
+        if (record.Talisman is not null)
+        {
+            return FormatTalisman(record);
+        }
         var lines = new List<GameTooltipLine>();
         GameItemTooltip? tooltip = record.Tooltip;
 
@@ -195,6 +199,78 @@ public static class GameTooltipFormatter
             AddLine(lines, $"售店价格：{tooltip.SellPrice}", FlagColor);
         }
 
+        AddLine(lines, tooltip.Action, CommandColor);
+        return lines;
+    }
+
+    public static IReadOnlyList<GameTooltipLine> FormatTalisman(
+        GameInfoRecord record,
+        GameTalismanSelection? selection = null)
+    {
+        var lines = new List<GameTooltipLine>();
+        if (record.Tooltip is not { } tooltip || record.Talisman is not { } info)
+        {
+            return lines;
+        }
+        AddLine(lines, tooltip.Name, ResolveQualityColor(tooltip.Quality), GameTooltipAlignment.Center);
+        AddBlankLine(lines);
+        if (tooltip.Bound.HasValue)
+        {
+            AddLine(lines, tooltip.Bound.Value ? "已绑定" : "未绑定", BoundColor);
+        }
+        AddLine(lines, info.RankText);
+        if (tooltip.RequiredProfessions.Count > 0)
+        {
+            AddLine(lines, $"需要：{string.Join(' ', tooltip.RequiredProfessions)}");
+        }
+        if (!string.IsNullOrEmpty(tooltip.Level))
+        {
+            AddLine(lines, $"等级：{tooltip.Level}");
+        }
+        foreach (GameInfoDetailRow row in tooltip.BaseRows)
+        {
+            AddLine(lines, $"{row.Label} {row.Value}");
+        }
+        foreach (string row in tooltip.EquipRows)
+        {
+            AddLine(lines, $"装备：{row}", EquipColor);
+        }
+        if (tooltip.Flags.Count > 0)
+        {
+            AddBlankLine(lines);
+            foreach (string flag in tooltip.Flags)
+            {
+                AddLine(lines, flag, FlagColor);
+            }
+        }
+        string description = string.IsNullOrWhiteSpace(tooltip.DescriptionRaw) ? tooltip.Description : tooltip.DescriptionRaw;
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            AddBlankLine(lines);
+            AddRichLines(lines, description);
+        }
+        if (info.MaxGrowth > 0)
+        {
+            int growth = selection?.Growth ?? info.MaxGrowth;
+            AddLine(lines, $"成长：{growth}段/{info.MaxGrowth}段 {(growth == 0 ? 0 : 100)}%", FlagColor);
+        }
+        foreach ((string row, int index) in info.RefinementRows.Select((row, index) => (row, index)))
+        {
+            AddLine(lines, $"[{index + 1}]{row}",
+                index < (selection?.ActivatedAttributes ?? info.RefinementRows.Count) ? EquipColor : HintColor);
+        }
+        if (!string.IsNullOrEmpty(tooltip.Durability) && tooltip.Durability != "0")
+        {
+            AddLine(lines, $"耐久：{tooltip.Durability}");
+        }
+        if (!string.IsNullOrEmpty(tooltip.SellPrice))
+        {
+            lines.Add(new GameTooltipLine(GameTooltipAlignment.Left,
+                new[] { new GameTooltipSpan($"售店价格 {tooltip.SellPrice}", FlagColor) })
+            {
+                IconPaths = info.CoinIconPath is { } coin ? new[] { coin } : Array.Empty<string>()
+            });
+        }
         AddLine(lines, tooltip.Action, CommandColor);
         return lines;
     }

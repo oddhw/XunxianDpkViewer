@@ -14,6 +14,7 @@ public sealed class GameInfoRepository
     public GameEquipmentUpgradeCatalog EquipmentUpgrades { get; private set; } = GameEquipmentUpgradeCatalog.Empty;
     public GameYinYangCatalog YinYang { get; private set; } = GameYinYangCatalog.Empty;
     public GameWanxiangCatalog Wanxiang { get; private set; } = GameWanxiangCatalog.Empty;
+    public GameTalismanCatalog Talismans { get; private set; } = GameTalismanCatalog.Empty;
 
     private GameInfoRepository(string? resourceFolder)
     {
@@ -36,6 +37,7 @@ public sealed class GameInfoRepository
             EquipmentUpgrades = GameEquipmentUpgradeCatalog.Empty;
             YinYang = GameYinYangCatalog.Empty;
             Wanxiang = GameWanxiangCatalog.Empty;
+            Talismans = GameTalismanCatalog.Empty;
             _categories = Array.Empty<GameInfoCategory>();
             return Task.FromResult(_categories);
         }
@@ -56,6 +58,7 @@ public sealed class GameInfoRepository
         EquipmentUpgrades = clientSnapshot.EquipmentUpgrades;
         YinYang = clientSnapshot.YinYang;
         Wanxiang = clientSnapshot.Wanxiang;
+        Talismans = clientSnapshot.Talismans;
 
         IReadOnlyList<GameInfoStage> weaponStages = BuildClientWeaponStages(clientSnapshot.Weapons);
         if (weaponStages.Count > 0)
@@ -77,6 +80,16 @@ public sealed class GameInfoRepository
                 string.Empty,
                 "\uE7BC",
                 equipmentStages));
+        }
+
+        if (Talismans.Items.Count > 0)
+        {
+            categories.Add(new GameInfoCategory(
+                "talisman",
+                Talismans.Name,
+                string.Empty,
+                "\uE8D4",
+                new[] { new GameInfoStage("talisman", Talismans.Name, string.Empty, string.Empty, Talismans.Items) }));
         }
 
         IReadOnlyList<GameInfoStage> yinyangStages = clientSnapshot.YinYang.Jades.Count == 0
@@ -229,7 +242,10 @@ public sealed record GameInfoRecord(
     string Group,
     string Summary,
     GameItemTooltip? Tooltip,
-    GameWeaponInfo? Weapon = null);
+    GameWeaponInfo? Weapon = null)
+{
+    public GameTalismanInfo? Talisman { get; init; }
+}
 
 public sealed record GameWeaponInfo(
     string LevelLabel,

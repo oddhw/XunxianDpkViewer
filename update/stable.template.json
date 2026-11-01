@@ -1,19 +1,17 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "3.2",
+  "version": "3.2.1",
   "releaseNotes": "",
-  "publishedAt": "2026-11-01T20:18:29+08:00",
+  "publishedAt": "2026-11-01T21:42:41+08:00",
   "bootstrapUrls": [
-    "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
-    "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
-    "https://gitee.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
+    "https://api.github.com/repos/oddhw/XunxianDpkViewer/contents/update/stable.json?ref=main",
     "https://raw.githubusercontent.com/oddhw/XunxianDpkViewer/main/update/stable.json",
     "https://github.com/oddhw/XunxianDpkViewer/releases/latest/download/stable.json"
   ],
   "packages": [
     {
-      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.2/XunxianDpkViewer.exe",
+      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.2.1/XunxianDpkViewer.exe",
       "sha256": "",
       "signature": "",
       "size": 0,

@@ -1,25 +1,23 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "3.2",
+  "version": "3.2.1",
   "releaseNotes": "",
-  "publishedAt": "2026-11-01T20:18:29+08:00",
+  "publishedAt": "2026-11-01T21:42:41+08:00",
   "bootstrapUrls": [
-    "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
-    "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
-    "https://gitee.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
+    "https://api.github.com/repos/oddhw/XunxianDpkViewer/contents/update/stable.json?ref=main",
     "https://raw.githubusercontent.com/oddhw/XunxianDpkViewer/main/update/stable.json",
     "https://github.com/oddhw/XunxianDpkViewer/releases/latest/download/stable.json"
   ],
   "packages": [
     {
-      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.2/XunxianDpkViewer.exe",
-      "sha256": "F2B9907A23DAABB89B57D8A97F75BD0264560B85EFF49C479DFBD2D67888C73F",
-      "signature": "l+4H+wNGARbj7Y4H/04Ya9cX2Bd1Dr0SqVaaEhOv04yozDn5BNReUrmvfbWQxf5vDeYEc8Yi6HRlUSnnJYBUx/0CVgg3bVAqK/u9JHVdebnIcCpRKgkmtQEA8zaLp78MPtg0MQ2aNlA7OPC2puZ+fVr6C9ZmoTc4QB8dMVpL+0csDRTGS3TtvNW9sOU07XGn/WsJ56Sn4LrPYAnhV9GUrG5jt9pI9oxPUgRcPkiV6HmaS4cqdr2IQn1/FzZIaTJsIU9GuUZM7PGpReINvOhm48dvbTr8KYaOMxDiCsgko50HknevuJKw1Gib1nt2OixSfpXJ/6vWYNPMfRDdqlzHXui7P0dFgtKeOK4M9DD1dC2yL2uCZWmTFE4ykSiUyHoraZ78FrQSF1Ed6IL2A93tqLWP7yD30mdAM2M5uellJHP/sBj+2mtBnsm0hz55eqZbh9EuVbOR+buHzeNcXCxSGz13kdq/l6mc683n2sKewu00idYBwErJVUYhmHPhYv003bgmj0jnwN6OziIUQrBeFbT/gyNaW8viaT0ecFLya8ePGNkbFepRWSr/5COZUprZ8Q4BRFzJEoBve9SHIkp5MJzGgGG/+ltP+mB2ykcn6WAfCjmdFQNtDJU/7JdwRbnaFK7SprFRj1WIx/WlIMl0Fnzwx0aAkkM96dlvpQAUQYk=",
-      "size": 96869341,
+      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.2.1/XunxianDpkViewer.exe",
+      "sha256": "243FADC296D0855D04C76E9A04A6C751D61F724FBDA0AABCA13E30BB53880899",
+      "signature": "aAD8MEAQ84II8ykwe1RuPChu0MPhgLHsOZDDG72VwjeV0TrQYKTe0GIql0m3CwoBmk/Tu/Rt26W3V7yHk1LbvlULRoJ1vq3LuBJtvBhdBxcmhedUj05zalippDfZcGWdSAq2ssiq/Hlrd35m/Rg97GLsB825DKuNrHb4o/LITKNCXdYwHlU8XeWs5oKb+b3PTB917yxk2EB8CAOXh9OgrvBOAy0fs8nEoLTr+M5f0Gj2XRYjmH0TjtpRzNT7VOMTf0rnRhIponPXq6Gdtxr6Fr7lAX+/HLbtkXmyuMt9TvDTGp3bdnzvxwIrYE0+nkgTpHydoHRbdiSjKL/MPp8R5TJ4UrOK+jGj8G+qS2AssDxsD4jKGYYZ+hkkxkmS/lB7YSNuw7dGJTUN5NaAdHOVK6ast+dKoLg7WUDuYYUGEESvYEz0zJiaE1XJVK+ETi2NiRi+jS6318LgmNo/KNZqxDQ7Dv29sNtZH8ZttmX4ugbGoAwM4HV8O/nxqj0SPZPDmN4zzGUoF11R0WiWyx6pV1aw9B0woyOc+huPu0JvfZEQXeZEw9W6JXYtcUw5n7oOamKQYRZLCIJEC/kk5l9gAqkQ2z2sl9xvudlC/PutK49DwZs2O8dDyGK4BYr8Xs5DGe2YXAkiZ9OxJLWB4FCIjH0AH9IJaTPYRF7p0dZSfuM=",
+      "size": 97102173,
       "priority": 100,
       "label": "GitHub Release"
     }
   ],
-  "signature": "hfpt6HCsQx106p0bagx20Pj/rMLkgv2qWeTSzpRn7EuhDzw5o25QzoVsIZ9YC9hCw8VPmSEiHc8SeACI4QWLPW05Iv348YXl1JWLnFWaFnhm+p37Vl9QrayU9UFYWaanHdziQLYOuwVtAsL7Nwez70E7elQSkN+O3/7Mr1nGN78AfMsZJeznv6bJRdXiV8JGazloCff3uxEpP/U3dARAa+8/6II25vYuQpkgV7QQ82SDZ3qMpJvMtuC94+QYaEuL0SEvN8l8+Hu35bU2O01O3QvYMlsWqAReTttI1l0KAaO3IztAdRI58IVWAQxyL8lkNes8KvPA32OEbBfqpk+b5lBXr2Z+j5QGucjR1ZNe7GxGWxLjfTvT0sW4KBto0nb9gwZXnzTGoiumjUhXBzfSCalJwmxkgVnC9ea1f2xWT8lYEm2r4UsIekgyO53OJ7gH1jN3mEsSZ1tL96Zw4ZcZMYOKub1xoB5LHkJ3CdrFRtRC7rDm8OV4O0zF7PBpCgjwWGAgeJ0S32zDwyMNBdXUztz5f6nQgMXA41mrXQAa3vOpmihza3n0T80VsAPvL2hR6brvmNqEEu1MN0wHTDwisPqBoVKRrm3AeNSy3vexInlu5ZhcK7kWuSDEmS5MSdgFTM7j8VwpMZVrb38zEAYMI+Zcdn4GJwIg/Us0Mx2b8fU="
+  "signature": "kCG5W/duUTjczR6gXuG+wKUdgqF2rpWtEFeBYWj6mFnlQm3otkDPVXaPsB2HJIMtWSuSaIFENrtYdTb1xTstVQSEMpYH7NK5K8uSCOI0stFanagbGy/MOq4X5g7Rz9UmPDFp7iMUI13TC9uX0OCkarec/TEtQzzhqsfu2CWqobd2gNRYONCN5fUCBJUqXlhEiXRdeW/MFFF3shooTyCZbGu0c49BEAD48SjwvUtFPv0sot5tTJy0bR7f+fWrbK/iljLLsR1USm+Bl/SwOgNzTupIB3N2G7vQM2hCG/Q/LRm/VzdDe9AGNk2KjX6WTkkRk0SEyyvv2D3Bs+Qca2ZuD0NQqUwaHmb2da6E7GIQOF1eL6wxE4g/nDCiGobUUeB3qWT0zYmSZcNfY1ErhesGOKj6aLDDmZCjBVezwL78TQn9lx8M7Sd3SMmkdjcNd0guVw405p7owVSJwzJieSLt5DY1AsdCzenliFTXbwiiMqGd1z41sJNORSu+xY5tbtGchqHLJPNzqLP7BsrnMXDCV57c3Zv6h1z56y6nDHlpSqyKUyJEf4i2aENCOusseXtxGA96Y6RgF3eJVZz8bI85GM11naU4Wa1U7cSGMBUs+F5tkpVANEttGEpj3/7NkB8qsveQ0eY5sncZ0hwDRPtao1ECC9XKFc4BKFEj9h1Ld4U="
 }

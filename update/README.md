@@ -3,6 +3,12 @@
 程序会依次读取内置地址和以前清单中学到的 `bootstrapUrls`。因此可以先从
 GitHub 或 GitCode 下发新的服务器地址，再逐步迁移下载源。
 
+当前内置源为 GitHub API、raw.githubusercontent.com 和 GitHub Release。
+之前未提供有效清单的 GitCode/Gitee 地址已停用。单次清单请求等待 30 秒，
+临时网络错误自动重试一次；GitHub Release 下载可在官方 API 和原附件地址间切换。
+官方 API 优先直连，失败时使用系统代理；原始附件地址优先使用系统连接设置，
+失败时尝试直连。无论采用哪条路径，清单和更新包都必须通过同一发布者签名校验。
+
 版本清单和更新包都必须通过内置 RSA 公钥签名校验。即使预留的备用仓库
 尚未创建，其他人也无法利用同名仓库向客户端下发可安装程序。私钥不得进入仓库，
 发布时通过 `-PrivateKey` 参数或 `XUNXIAN_UPDATE_PRIVATE_KEY` 环境变量传入。
@@ -19,6 +25,12 @@ GitHub 或 GitCode 下发新的服务器地址，再逐步迁移下载源。
 .\publish-single.cmd
 .\tools\SignUpdateManifest.ps1 -Manifest .\update\stable.json -PackagePath .\XunxianDpkViewer.exe -PrivateKey 私钥文件路径
 .\tools\TestUpdateRelease.ps1 -Manifest .\update\stable.json -PackagePath .\XunxianDpkViewer.exe
+```
+
+更新源和下载回退逻辑可离线验证，不会读写用户设置：
+
+```powershell
+dotnet run --project .\tools\UpdateServiceChecks\UpdateServiceChecks.csproj -c Release -- .\update\stable.json .\XunxianDpkViewer.exe
 ```
 
 ## 国内下载镜像

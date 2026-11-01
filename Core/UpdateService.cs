@@ -9,12 +9,17 @@ public sealed class UpdateService
 {
     private static readonly string[] BuiltInBootstrapUrls =
     [
-        "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
-        "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
-        "https://gitee.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
+        "https://api.github.com/repos/oddhw/XunxianDpkViewer/contents/update/stable.json?ref=main",
         "https://raw.githubusercontent.com/oddhw/XunxianDpkViewer/main/update/stable.json",
         "https://github.com/oddhw/XunxianDpkViewer/releases/latest/download/stable.json"
     ];
+
+    private static readonly HashSet<string> RetiredBootstrapUrls = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "https://gitcode.com/oddhw/XunxianDpkViewer/raw/main/update/stable.json",
+        "https://gitcode.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json",
+        "https://gitee.com/oddhw/XunxianDpkViewer/raw/master/update/stable.json"
+    };
 
     private static readonly string[] UpdateSigningPublicKeys =
     [
@@ -25,10 +30,29 @@ public sealed class UpdateService
     ];
 
     private static readonly HttpClient Client = CreateClient();
+    private static readonly HttpClient DirectClient = CreateClient(useProxy: false);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
+
+    private readonly HttpClient _client;
+    private readonly HttpClient? _fallbackClient;
+    private readonly IReadOnlyList<string> _bootstrapUrls;
+    private readonly TimeSpan _requestTimeout;
+
+    public UpdateService() : this(Client, BuiltInBootstrapUrls, TimeSpan.FromSeconds(30), DirectClient)
+    {
+    }
+
+    internal UpdateService(HttpClient client, IReadOnlyList<string> bootstrapUrls, TimeSpan requestTimeout,
+        HttpClient? fallbackClient = null)
+    {
+        _client = client;
+        _fallbackClient = fallbackClient;
+        _bootstrapUrls = bootstrapUrls;
+        _requestTimeout = requestTimeout;
+    }
 
     public async Task<UpdateCheckResult> CheckAsync(
         string currentVersion,
@@ -46,7 +70,8 @@ public sealed class UpdateService
         }
 
         string[] urls = UserPreferences.LoadUpdateBootstrapUrls()
-            .Concat(BuiltInBootstrapUrls)
+            .Concat(_bootstrapUrls)
+            .Where(url => !RetiredBootstrapUrls.Contains(url))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -103,26 +128,32 @@ public sealed class UpdateService
                      .Where(IsValidPackage)
                      .OrderBy(item => item.Priority))
         {
-            try
+            string? apiAssetUrl = await TryGetGitHubAssetUrlAsync(package.Url, cancellationToken);
+            foreach ((string downloadUrl, HttpClient client) in new[] { apiAssetUrl, package.Url }
+                         .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)
+                         .SelectMany(url => GetRequestClients(url).Select(client => (url, client))))
             {
-                progress?.Report(new UpdateDownloadProgress(
-                    0,
-                    package.Size > 0 ? package.Size : null,
-                    0,
-                    GetPackageLabel(package)));
-                return await DownloadPackageAsync(manifest.Version, package, progress, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                throw new InvalidOperationException($"更新文件处理失败：{exception.Message}", exception);
-            }
-            catch (Exception exception)
-            {
-                errors.Add($"{GetPackageLabel(package)}：{exception.Message}");
+                try
+                {
+                    progress?.Report(new UpdateDownloadProgress(
+                        0,
+                        package.Size > 0 ? package.Size : null,
+                        0,
+                        GetPackageLabel(package)));
+                    return await DownloadPackageAsync(manifest.Version, package, downloadUrl, client, progress, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    throw new InvalidOperationException($"更新文件处理失败：{exception.Message}", exception);
+                }
+                catch (Exception exception)
+                {
+                    errors.Add($"{GetPackageLabel(package)}：{exception.Message}");
+                }
             }
         }
 
@@ -154,53 +185,77 @@ public sealed class UpdateService
         }
     }
 
-    private static async Task<UpdateChannelManifest?> DownloadManifestAsync(
+    private async Task<UpdateChannelManifest?> DownloadManifestAsync(
         string url,
+        HttpClient client,
         CancellationToken cancellationToken)
     {
         if (!IsSecureHttpUrl(url)) return null;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(8));
-        using HttpResponseMessage response = await Client.GetAsync(
-            url,
+        timeout.CancelAfter(_requestTimeout);
+        using HttpRequestMessage request = CreateRequest(url, "application/vnd.github.raw+json");
+        using HttpResponseMessage response = await client.SendAsync(
+            request,
             HttpCompletionOption.ResponseHeadersRead,
             timeout.Token);
         response.EnsureSuccessStatusCode();
 
         await using Stream stream = await response.Content.ReadAsStreamAsync(timeout.Token);
-        return await JsonSerializer.DeserializeAsync<UpdateChannelManifest>(
-            stream,
-            JsonOptions,
-            timeout.Token);
+        using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: timeout.Token);
+        JsonElement root = document.RootElement;
+        if (new Uri(url).Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase) &&
+            root.TryGetProperty("encoding", out JsonElement encoding) && encoding.GetString() == "base64" &&
+            root.TryGetProperty("content", out JsonElement content))
+        {
+            return JsonSerializer.Deserialize<UpdateChannelManifest>(
+                Convert.FromBase64String(content.GetString() ?? string.Empty), JsonOptions);
+        }
+        return root.Deserialize<UpdateChannelManifest>(JsonOptions);
     }
 
-    private static async Task<ManifestCandidate> DownloadManifestCandidateAsync(
+    private async Task<ManifestCandidate> DownloadManifestCandidateAsync(
         string url,
         CancellationToken cancellationToken)
     {
-        try
+        HttpClient[] clients = GetRequestClients(url).ToArray();
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            UpdateChannelManifest? manifest = await DownloadManifestAsync(url, cancellationToken);
-            if (manifest is null)
-                return new ManifestCandidate(url, null, $"{GetHostLabel(url)}：没有返回版本信息");
-            if (!IsValidManifest(manifest))
-                return new ManifestCandidate(url, null, $"{GetHostLabel(url)}：版本清单签名无效");
-            return new ManifestCandidate(url, manifest, null);
+            try
+            {
+                UpdateChannelManifest? manifest = await DownloadManifestAsync(
+                    url, clients[Math.Min(attempt, clients.Length - 1)], cancellationToken);
+                if (manifest is null)
+                    return new ManifestCandidate(url, null, $"{GetHostLabel(url)}：没有返回版本信息");
+                if (!IsValidManifest(manifest))
+                    return new ManifestCandidate(url, null, $"{GetHostLabel(url)}：版本清单签名无效");
+                return new ManifestCandidate(url, manifest, null);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                bool transient = exception is OperationCanceledException or IOException ||
+                    exception is HttpRequestException http &&
+                    (http.StatusCode is null || (int)http.StatusCode >= 500 ||
+                     http.StatusCode is System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests);
+                if (attempt == 0 && transient)
+                {
+                    continue;
+                }
+                return new ManifestCandidate(url, null, $"{GetHostLabel(url)}：{exception.Message}");
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            return new ManifestCandidate(url, null, $"{GetHostLabel(url)}：{exception.Message}");
-        }
+        return new ManifestCandidate(url, null, GetHostLabel(url));
     }
 
-    private static async Task<UpdateDownloadResult> DownloadPackageAsync(
+    private async Task<UpdateDownloadResult> DownloadPackageAsync(
         string version,
         UpdatePackage package,
+        string downloadUrl,
+        HttpClient client,
         IProgress<UpdateDownloadProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -222,11 +277,15 @@ public sealed class UpdateService
             long received = 0;
             long? totalBytes;
 
-            using (HttpResponseMessage response = await Client.GetAsync(
-                       package.Url,
+            using var request = CreateRequest(downloadUrl, "application/octet-stream");
+            using var headerTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            headerTimeout.CancelAfter(_requestTimeout);
+            using (HttpResponseMessage response = await client.SendAsync(
+                       request,
                        HttpCompletionOption.ResponseHeadersRead,
-                       cancellationToken))
+                       headerTimeout.Token))
             {
+                headerTimeout.CancelAfter(Timeout.InfiniteTimeSpan);
                 response.EnsureSuccessStatusCode();
                 totalBytes = response.Content.Headers.ContentLength;
 
@@ -241,9 +300,20 @@ public sealed class UpdateService
                 using (IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
                 {
                     byte[] buffer = new byte[1024 * 128];
+                    using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     while (true)
                     {
-                        int count = await input.ReadAsync(buffer, cancellationToken);
+                        readTimeout.CancelAfter(_requestTimeout);
+                        int count;
+                        try
+                        {
+                            count = await input.ReadAsync(buffer, readTimeout.Token);
+                        }
+                        catch (IOException exception)
+                        {
+                            throw new HttpRequestException(exception.Message, exception);
+                        }
+                        readTimeout.CancelAfter(Timeout.InfiniteTimeSpan);
                         if (count == 0) break;
 
                         await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
@@ -277,11 +347,73 @@ public sealed class UpdateService
             File.Move(temporaryPath, finalPath, overwrite: true);
             return new UpdateDownloadResult(finalPath, package);
         }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            TryDeleteDirectory(updateFolder);
+            throw new HttpRequestException(exception.Message, exception);
+        }
         catch
         {
             TryDeleteDirectory(updateFolder);
             throw;
         }
+    }
+
+    private async Task<string?> TryGetGitHubAssetUrlAsync(string downloadUrl, CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out Uri? uri) ||
+            !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)) return null;
+        string[] parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 6 || parts[2] != "releases" || parts[3] != "download") return null;
+
+        string metadataUrl = $"https://api.github.com/repos/{parts[0]}/{parts[1]}/releases/tags/{parts[4]}";
+        foreach (HttpClient client in GetRequestClients(metadataUrl))
+        {
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(_requestTimeout);
+                using HttpRequestMessage request = CreateRequest(metadataUrl, "application/vnd.github+json");
+                using HttpResponseMessage response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                response.EnsureSuccessStatusCode();
+                await using Stream stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+                using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: timeout.Token);
+                string assetName = Uri.UnescapeDataString(parts[5]);
+                foreach (JsonElement asset in document.RootElement.GetProperty("assets").EnumerateArray())
+                {
+                    if (asset.GetProperty("name").GetString() == assetName &&
+                        Uri.TryCreate(asset.GetProperty("url").GetString(), UriKind.Absolute, out Uri? assetUri) &&
+                        assetUri.Scheme == Uri.UriSchemeHttps && assetUri.Host == "api.github.com")
+                    {
+                        return assetUri.AbsoluteUri;
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or
+                                             IOException or JsonException or InvalidOperationException or KeyNotFoundException)
+            {
+                // The signed original URL remains available when release metadata cannot be read.
+            }
+        }
+        return null;
+    }
+
+    private IEnumerable<HttpClient> GetRequestClients(string url)
+    {
+        bool directFirst = new Uri(url).Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase);
+        return (directFirst ? new[] { _fallbackClient, _client } : new[] { _client, _fallbackClient })
+            .OfType<HttpClient>().Distinct();
+    }
+
+    private static HttpRequestMessage CreateRequest(string url, string mediaType)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(mediaType));
+        return request;
     }
 
     private static bool IsValidManifest(UpdateChannelManifest manifest)
@@ -464,11 +596,12 @@ public sealed class UpdateService
         }
     }
 
-    private static HttpClient CreateClient()
+    private static HttpClient CreateClient(bool useProxy = true)
     {
         var handler = new SocketsHttpHandler
         {
-            ConnectTimeout = TimeSpan.FromSeconds(12)
+            UseProxy = useProxy,
+            ConnectTimeout = TimeSpan.FromSeconds(30)
         };
         var client = new HttpClient(handler)
         {

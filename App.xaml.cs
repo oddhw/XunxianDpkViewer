@@ -67,6 +67,18 @@ public partial class App : Application
                 return;
             }
 #if DEBUG
+            string? equipmentViewArgument = commandLineArgs.FirstOrDefault(argument =>
+                argument.StartsWith("--verify-equipment-view=", StringComparison.OrdinalIgnoreCase));
+            if (equipmentViewArgument is not null)
+            {
+                string outputFolder = equipmentViewArgument[(equipmentViewArgument.IndexOf('=') + 1)..].Trim('"');
+                string resourceFolder = Path.Combine(outputFolder, "client", "res");
+                var gameInfoWindow = new GameInfoWindow(resourceFolder);
+                _window = gameInfoWindow;
+                gameInfoWindow.Activate();
+                _ = gameInfoWindow.VerifyEquipmentUpdatesAsync(outputFolder);
+                return;
+            }
             string? talismanViewArgument = commandLineArgs.FirstOrDefault(argument =>
                 argument.StartsWith("--verify-talisman-view=", StringComparison.OrdinalIgnoreCase));
             if (talismanViewArgument is not null)

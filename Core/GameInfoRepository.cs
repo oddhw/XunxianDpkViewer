@@ -7,6 +7,7 @@ public sealed class GameInfoRepository
     private readonly Dictionary<string, GameMaterialIcon> _materialIcons = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<GameInfoCategory> _categories = Array.Empty<GameInfoCategory>();
 
+    internal GameClientDataVersion? ClientDataVersion { get; private set; }
     public IReadOnlyList<GameInfoCategory> Categories => _categories;
     public GameWeaponEnhancementCatalog WeaponEnhancement { get; private set; } = GameWeaponEnhancementCatalog.Empty;
     public GameEquipmentWashCatalog EquipmentWash { get; private set; } = GameEquipmentWashCatalog.Empty;
@@ -23,12 +24,18 @@ public sealed class GameInfoRepository
 
     public Task<IReadOnlyList<GameInfoCategory>> LoadAsync()
     {
+        GameClientDataVersion? clientVersion = GameClientInfoReader.GetDataVersion(_resourceFolder);
         _tooltips.Clear();
         _materialIcons.Clear();
         var categories = new List<GameInfoCategory>();
         GameClientInfoSnapshot? clientSnapshot = string.IsNullOrWhiteSpace(_resourceFolder)
             ? null
             : GameClientInfoReader.Load(_resourceFolder);
+        if (clientVersion != GameClientInfoReader.GetDataVersion(_resourceFolder))
+        {
+            throw new IOException("Client resources changed while loading game information.");
+        }
+        ClientDataVersion = clientVersion;
         if (clientSnapshot is null)
         {
             WeaponEnhancement = GameWeaponEnhancementCatalog.Empty;
@@ -71,7 +78,8 @@ public sealed class GameInfoRepository
                 weaponStages));
         }
 
-        IReadOnlyList<GameInfoStage> equipmentStages = BuildClientEquipmentStages(clientSnapshot.Equipment);
+        IReadOnlyList<GameInfoStage> equipmentStages = BuildClientEquipmentStages(
+            clientSnapshot.Equipment, clientSnapshot.EquipmentUpgrades);
         if (equipmentStages.Count > 0)
         {
             categories.Add(new GameInfoCategory(
@@ -138,10 +146,11 @@ public sealed class GameInfoRepository
         return Task.FromResult(_categories);
     }
 
-    private static IReadOnlyList<GameInfoStage> BuildClientEquipmentStages(
-        IReadOnlyList<GameInfoRecord> equipment)
+    internal static IReadOnlyList<GameInfoStage> BuildClientEquipmentStages(
+        IReadOnlyList<GameInfoRecord> equipment,
+        GameEquipmentUpgradeCatalog upgrades)
     {
-        (string Id, string Name, string Series, bool? LingOnly)[] stages =
+        var stages = new List<(string Id, string Name, string Series, bool? LingOnly)>
         {
             ("fenglin", "凤麟装备", "凤麟", false),
             ("fenglin-ling", "凤麟灵装备", "凤麟", true),
@@ -161,6 +170,42 @@ public sealed class GameInfoRepository
             ("xingyun", "星陨装备", "星陨", null)
         };
 
+        var seriesRecords = equipment
+            .GroupBy(record => EquipmentSeries(record.Name), StringComparer.Ordinal)
+            .Where(group => group.Key.Length > 0)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var includedSeries = stages.Select(stage => stage.Series).ToHashSet(StringComparer.Ordinal);
+        var transitions = upgrades.Steps
+            .Select(step => (Source: EquipmentSeries(step.SourceName), Target: EquipmentSeries(step.TargetName)))
+            .Where(step => step.Source.Length > 0 && step.Target.Length > 0 && step.Source != step.Target)
+            .Distinct()
+            .ToArray();
+
+        // Keep the established progression and extend it through the client's upgrade routes.
+        while (true)
+        {
+            string[] nextSeries = transitions
+                .Where(step => includedSeries.Contains(step.Source) && !includedSeries.Contains(step.Target) &&
+                               seriesRecords.ContainsKey(step.Target))
+                .Select(step => step.Target)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(series => seriesRecords[series].Min(record =>
+                    int.TryParse(record.Tooltip?.Level, out int level) ? level : int.MaxValue))
+                .ThenBy(series => seriesRecords[series].Min(record =>
+                    int.TryParse(record.Id, out int itemId) ? itemId : int.MaxValue))
+                .ToArray();
+            if (nextSeries.Length == 0)
+            {
+                break;
+            }
+
+            foreach (string series in nextSeries)
+            {
+                includedSeries.Add(series);
+                stages.Add(($"client-equipment-{series}", $"{series}装备", series, null));
+            }
+        }
+
         return stages
             .Select(stage => new GameInfoStage(
                 stage.Id,
@@ -176,6 +221,12 @@ public sealed class GameInfoRepository
                     .ToArray()))
             .Where(stage => stage.Records.Count > 0)
             .ToArray();
+    }
+
+    private static string EquipmentSeries(string name)
+    {
+        int separator = name.IndexOf('【');
+        return separator > 0 ? name[..separator] : string.Empty;
     }
 
     public static GameInfoRepository Load(string? resourceFolder = null)

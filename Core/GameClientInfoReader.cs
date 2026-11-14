@@ -31,6 +31,14 @@ public sealed record GameClientEquipmentTooltip(
     IReadOnlyList<string> FeatureRows,
     GameItemTooltip Tooltip);
 
+internal sealed record GameClientDataVersion(
+    string MbPath,
+    long MbLength,
+    DateTime MbLastWriteTimeUtc,
+    string GuiPath,
+    long GuiLength,
+    DateTime GuiLastWriteTimeUtc);
+
 public static partial class GameClientInfoReader
 {
     private const int LevelsPerRank = 10;
@@ -2686,6 +2694,21 @@ public static partial class GameClientInfoReader
         }
 
         return raw % 1_000_000 == 0 ? $"{raw / 1_000_000}砖" : raw.ToString();
+    }
+
+    internal static GameClientDataVersion? GetDataVersion(string? selectedPath)
+    {
+        if (string.IsNullOrWhiteSpace(selectedPath) ||
+            !TryResolveClientPaths(selectedPath, out string resourceFolder, out string mbPath))
+        {
+            return null;
+        }
+
+        var mb = new FileInfo(mbPath);
+        var gui = new FileInfo(Path.Combine(resourceFolder, "gui.dpk"));
+        return new GameClientDataVersion(
+            mb.FullName, mb.Length, mb.LastWriteTimeUtc,
+            gui.FullName, gui.Length, gui.LastWriteTimeUtc);
     }
 
     private static bool TryResolveClientPaths(

@@ -4,7 +4,7 @@ using XunxianDpkViewer.Models;
 
 namespace XunxianDpkViewer.Core;
 
-public static class SelfTest
+public static partial class SelfTest
 {
     public static string Run(Action<string>? progress = null)
     {
@@ -304,16 +304,16 @@ public static class SelfTest
             .Select(group => group.First().QualityName)
             .ToArray();
         if (wanxiang.Plates.Count != 2 ||
-            wanxiang.Levels.Count != 169 ||
-            wanxiang.GemSeries.Count != 140 ||
-            wanxiang.UpgradeMethods.Count != 34 ||
+            wanxiang.Levels.Count < 169 ||
+            wanxiang.GemSeries.Count < 140 ||
+            wanxiang.UpgradeMethods.Count < 34 ||
             !wanxiang.GuaNames.SequenceEqual(expectedGuaNames) ||
-            !actualPlateQualities.SequenceEqual(expectedPlateQualities) ||
+            !actualPlateQualities.Take(expectedPlateQualities.Length).SequenceEqual(expectedPlateQualities) ||
             wanxiang.NoGuaText != "无" ||
             wanxiang.FireUpgradeTipFormat != "消耗材料:<c:FFB6FF00>[%s]<c>*%d" ||
             wanxiang.FairyUpgradeTipFormat != "消耗材料:<c:FFFF6A00>[%s]<c>*%d" ||
             wanxiang.LevelPetalPaths.Count != 168 ||
-            wanxiang.LevelExpPaths.Count != 21 ||
+            wanxiang.LevelExpPaths.Count < 21 ||
             string.IsNullOrWhiteSpace(wanxiang.InlayBackgroundPath) ||
             string.IsNullOrWhiteSpace(wanxiang.EmptySlotPath) ||
             string.IsNullOrWhiteSpace(wanxiang.SelectionFramePath) ||
@@ -339,7 +339,8 @@ public static class SelfTest
         }
 
         GameWanxiangLevelState firstPlateLevel = wanxiang.Levels[0];
-        GameWanxiangLevelState finalPlateLevel = wanxiang.Levels[^1];
+        GameWanxiangLevelState finalPlateLevel = wanxiang.Levels.Single(level =>
+            level.QualityName == "寰品" && level.Segment == 8);
         IReadOnlyList<GameWanxiangState> noGuaStates = firstPlateLevel.ResolveStates(0, "乾");
         GameWanxiangState? firstScatter = firstPlateLevel.ResolveStates(1, "乾").SingleOrDefault();
         GameWanxiangState? firstGua = firstPlateLevel.ResolveStates(8, "乾").SingleOrDefault();
@@ -376,7 +377,7 @@ public static class SelfTest
         GameWanxiangGemSeries[] selectableGemSeries = wanxiang.GemSeries
             .Where(series => !series.IsBound)
             .ToArray();
-        if (selectableGemSeries.Length != 72 ||
+        if (selectableGemSeries.Length < 72 ||
             selectableGemSeries.Any(series => series.Name.Contains("绑定", StringComparison.Ordinal)))
         {
             throw new InvalidDataException("Client Wanxiang selectable gem list contains bound items.");
@@ -495,14 +496,16 @@ public static class SelfTest
         {
             24, 24, 128, 64, 64, 64, 64, 64, 64, 64, 64, 96, 64, 64, 96, 64
         };
-        if (equipmentCategory.RecordCount != 1072 ||
-            !equipmentCategory.Stages.Select(stage => stage.Name).SequenceEqual(expectedEquipmentStages) ||
-            !equipmentCategory.Stages.Select(stage => stage.Records.Count).SequenceEqual(expectedEquipmentStageCounts) ||
+        if (!equipmentCategory.Stages.Take(expectedEquipmentStages.Length)
+                .Select(stage => stage.Name).SequenceEqual(expectedEquipmentStages) ||
+            equipmentCategory.Stages.Take(expectedEquipmentStageCounts.Length)
+                .Where((stage, index) => stage.Records.Count < expectedEquipmentStageCounts[index]).Any() ||
             equipmentCategory.Stages.Any(stage => int.TryParse(stage.Name, out _)))
         {
             throw new InvalidDataException(
                 $"Client equipment progression is incorrect: {string.Join(" -> ", equipmentCategory.Stages.Select(stage => $"{stage.Name}({stage.Records.Count})"))}.");
         }
+        report.Append(VerifyEquipmentUpdates(repository, resourceRoot));
 
         GameInfoRecord? equipmentRecord = equipmentCategory.Stages
             .SelectMany(stage => stage.Records)

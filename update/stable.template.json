@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "releaseNotes": "",
-  "publishedAt": "2026-11-01T21:42:41+08:00",
+  "publishedAt": "2026-11-14T14:57:22+08:00",
   "bootstrapUrls": [
     "https://api.github.com/repos/oddhw/XunxianDpkViewer/contents/update/stable.json?ref=main",
     "https://raw.githubusercontent.com/oddhw/XunxianDpkViewer/main/update/stable.json",
@@ -11,7 +11,7 @@
   ],
   "packages": [
     {
-      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.2.1/XunxianDpkViewer.exe",
+      "url": "https://github.com/oddhw/XunxianDpkViewer/releases/download/v3.2.2/XunxianDpkViewer.exe",
       "sha256": "",
       "signature": "",
       "size": 0,

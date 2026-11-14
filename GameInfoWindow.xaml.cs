@@ -66,9 +66,21 @@ public sealed partial class GameInfoWindow : Window
         _equipmentFireTimer = DispatcherQueue.CreateTimer();
         _equipmentFireTimer.Interval = TimeSpan.FromMilliseconds(20);
         _equipmentFireTimer.Tick += EquipmentFireTimer_Tick;
+        _clientDataTimer = DispatcherQueue.CreateTimer();
+        _clientDataTimer.Interval = TimeSpan.FromSeconds(3);
+        _clientDataTimer.Tick += async (_, _) => await RefreshClientDataIfChangedAsync();
+        Activated += (_, args) =>
+        {
+            if (args.WindowActivationState != WindowActivationState.Deactivated)
+            {
+                _ = RefreshClientDataIfChangedAsync();
+            }
+        };
         Closed += (_, _) =>
         {
+            _clientDataClosed = true;
             _talismanViewClosed = true;
+            _clientDataTimer.Stop();
             _equipmentFireTimer.Stop();
         };
 
@@ -97,29 +109,23 @@ public sealed partial class GameInfoWindow : Window
 
         try
         {
-            _repository = await Task.Run(() => GameInfoRepository.Load(_resourceFolder));
-            _categories = _repository.Categories;
-            _yinYangCatalog = _repository.YinYang;
-            _wanxiangCatalog = _repository.Wanxiang;
-            CategoryList.ItemsSource = _categories;
-            if (_categories.Count > 0)
-            {
-                CategoryList.SelectedIndex = 0;
-            }
-            else
+            await ReloadClientDataAsync();
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(exception);
+            if (!_clientDataClosed)
             {
                 EmptyState.Visibility = Visibility.Visible;
             }
         }
-        catch (Exception exception)
-        {
-            CategoryTitleText.Text = "游戏资料读取失败";
-            CategoryDescriptionText.Text = exception.Message;
-            EmptyState.Visibility = Visibility.Visible;
-        }
         finally
         {
-            LoadingState.Visibility = Visibility.Collapsed;
+            if (!_clientDataClosed)
+            {
+                LoadingState.Visibility = Visibility.Collapsed;
+                _clientDataTimer.Start();
+            }
         }
     }
 
